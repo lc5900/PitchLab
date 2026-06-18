@@ -17,10 +17,24 @@ interface AppSettingsStore {
     suspend fun saveLanguage(language: AppLanguage)
 }
 
+interface ReferenceTonePlayer {
+    fun play(frequencyHz: Double, instrument: TunerInstrument)
+}
+
+enum class AudioInputError {
+    PermissionDenied,
+    Unavailable,
+}
+
+class AudioInputException(
+    val reason: AudioInputError,
+) : RuntimeException(reason.name)
+
 data class PitchLabDependencies(
     val audioInput: PlatformAudioInput,
     val historyStore: PracticeHistoryStore,
     val settingsStore: AppSettingsStore,
+    val referenceTonePlayer: ReferenceTonePlayer,
 )
 
 @Composable

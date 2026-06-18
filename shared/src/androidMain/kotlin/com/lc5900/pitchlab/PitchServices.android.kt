@@ -3,8 +3,10 @@ package com.lc5900.pitchlab
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaRecorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -16,6 +18,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.concurrent.thread
+import kotlin.math.PI
+import kotlin.math.exp
+import kotlin.math.sin
 
 @Composable
 actual fun rememberPitchLabDependencies(): PitchLabDependencies {
@@ -25,6 +31,7 @@ actual fun rememberPitchLabDependencies(): PitchLabDependencies {
             audioInput = AndroidAudioInput(context),
             historyStore = AndroidPracticeHistoryStore(context),
             settingsStore = AndroidAppSettingsStore(context),
+            referenceTonePlayer = AndroidReferenceTonePlayer(),
         )
     }
 }
@@ -36,7 +43,7 @@ private class AndroidAudioInput(
 ) : PlatformAudioInput {
     override fun frames(): Flow<AudioFrame> = callbackFlow {
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            close()
+            close(AudioInputException(AudioInputError.PermissionDenied))
             return@callbackFlow
         }
 
@@ -49,23 +56,41 @@ private class AndroidAudioInput(
         )
         val bufferSize = maxOf(minBuffer, frameSize * 2)
 
-        @Suppress("MissingPermission")
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            sampleRate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufferSize,
-        )
+        val recorder = try {
+            @Suppress("MissingPermission")
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize,
+            )
+        } catch (securityException: SecurityException) {
+            close(AudioInputException(AudioInputError.PermissionDenied))
+            return@callbackFlow
+        } catch (exception: RuntimeException) {
+            close(AudioInputException(AudioInputError.Unavailable))
+            return@callbackFlow
+        }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release()
-            close()
+            close(AudioInputException(AudioInputError.Unavailable))
             return@callbackFlow
         }
 
         val job = launch(Dispatchers.Default) {
             val shortBuffer = ShortArray(frameSize)
-            recorder.startRecording()
+            try {
+                recorder.startRecording()
+            } catch (securityException: SecurityException) {
+                close(AudioInputException(AudioInputError.PermissionDenied))
+                recorder.release()
+                return@launch
+            } catch (exception: RuntimeException) {
+                close(AudioInputException(AudioInputError.Unavailable))
+                recorder.release()
+                return@launch
+            }
             try {
                 while (currentCoroutineContext().isActive) {
                     val read = recorder.read(shortBuffer, 0, shortBuffer.size)
@@ -75,6 +100,9 @@ private class AndroidAudioInput(
                             samples[index] = shortBuffer[index] / Short.MAX_VALUE.toFloat()
                         }
                         trySend(AudioFrame(samples, sampleRate))
+                    } else if (read < 0) {
+                        close(AudioInputException(AudioInputError.Unavailable))
+                        break
                     }
                 }
             } finally {
@@ -100,6 +128,89 @@ private class AndroidAppSettingsStore(
 
     override suspend fun saveLanguage(language: AppLanguage) {
         preferences.edit().putString("language", language.name).apply()
+    }
+}
+
+private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
+    private val lock = Any()
+    private var playToken = 0
+    private var currentTrack: AudioTrack? = null
+
+    override fun play(frequencyHz: Double, instrument: TunerInstrument) {
+        val token = synchronized(lock) {
+            playToken += 1
+            currentTrack?.stopAndRelease()
+            currentTrack = null
+            playToken
+        }
+        thread(name = "PitchLabReferenceTone") {
+            val sampleRate = 44_100
+            val durationMillis = 1_250
+            val sampleCount = sampleRate * durationMillis / 1000
+            val harmonics = if (instrument == TunerInstrument.Guitar) {
+                doubleArrayOf(1.0, 0.62, 0.42, 0.28, 0.2, 0.14)
+            } else {
+                doubleArrayOf(1.0, 0.48, 0.26, 0.14)
+            }
+            val samples = ShortArray(sampleCount) { index ->
+                val time = index.toDouble() / sampleRate
+                val attack = (time / 0.018).coerceIn(0.0, 1.0)
+                val decay = exp(-2.4 * time)
+                val envelope = attack * decay
+                var mixed = 0.0
+                harmonics.forEachIndexed { harmonicIndex, amplitude ->
+                    mixed += sin(2.0 * PI * frequencyHz * (harmonicIndex + 1) * time) * amplitude
+                }
+                val lowBoost = if (frequencyHz < 130.0) 1.25 else 1.0
+                val value = (mixed / harmonics.sum()) * envelope * Short.MAX_VALUE * 0.92 * lowBoost
+                value.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            }
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(sampleRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(samples.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            synchronized(lock) {
+                if (token != playToken) {
+                    track.release()
+                    return@thread
+                }
+                currentTrack = track
+            }
+            try {
+                track.write(samples, 0, samples.size)
+                track.play()
+                Thread.sleep(durationMillis + 80L)
+            } finally {
+                synchronized(lock) {
+                    if (currentTrack == track) {
+                        currentTrack = null
+                    }
+                }
+                track.stopAndRelease()
+            }
+        }
+    }
+
+    private fun AudioTrack.stopAndRelease() {
+        runCatching {
+            if (playState == AudioTrack.PLAYSTATE_PLAYING) {
+                stop()
+            }
+        }
+        release()
     }
 }
 

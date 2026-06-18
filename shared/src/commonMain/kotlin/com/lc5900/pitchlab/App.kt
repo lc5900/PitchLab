@@ -51,11 +51,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -78,26 +76,60 @@ fun App() {
     val scope = rememberCoroutineScope()
     val controller = remember(dependencies) { PitchLabController(dependencies, scope) }
     val state by controller.state.collectAsState()
-    val density = LocalDensity.current
     val homeExitHandler = rememberHomeExitHandler()
     val strings = pitchStrings(state.language)
+    var pendingDiscardAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     PlatformBackHandler {
         if (state.screen == PitchScreen.Home) {
             homeExitHandler.requestExit(strings.backAgainToExit)
+        } else if (state.hasUnsavedPractice()) {
+            pendingDiscardAction = { controller.backHome() }
         } else {
             controller.backHome()
         }
     }
 
     MaterialTheme(colorScheme = darkColorScheme(background = AppBackground, surface = Panel)) {
-        CompositionLocalProvider(
-            LocalDensity provides Density(density.density, fontScale = 1f),
-            LocalPitchStrings provides strings,
-        ) {
+        CompositionLocalProvider(LocalPitchStrings provides strings) {
+            pendingDiscardAction?.let { action ->
+                AlertDialog(
+                    onDismissRequest = { pendingDiscardAction = null },
+                    title = { Text(strings.discardPracticeTitle) },
+                    text = { Text(strings.discardPracticeBody) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                pendingDiscardAction = null
+                                action()
+                            },
+                        ) {
+                            Text(strings.discardPracticeConfirm)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { pendingDiscardAction = null }) {
+                            Text(strings.cancel)
+                        }
+                    },
+                )
+            }
             Surface(modifier = Modifier.fillMaxSize(), color = AppBackground) {
                 when (state.screen) {
                     PitchScreen.Home -> HomeScreen(state, controller)
-                    PitchScreen.Session -> SessionScreen(state, controller)
+                    PitchScreen.Tuner -> TunerScreen(
+                        state = state,
+                        controller = controller,
+                        requestDiscardingAction = { action ->
+                            if (state.hasUnsavedPractice()) pendingDiscardAction = action else action()
+                        },
+                    )
+                    PitchScreen.Session -> SessionScreen(
+                        state = state,
+                        controller = controller,
+                        requestDiscardingAction = { action ->
+                            if (state.hasUnsavedPractice()) pendingDiscardAction = action else action()
+                        },
+                    )
                     PitchScreen.History -> HistoryScreen(state, controller)
                     PitchScreen.Settings -> SettingsScreen(state, controller)
                 }
@@ -123,7 +155,6 @@ private fun HomeScreen(state: PitchLabUiState, controller: PitchLabController) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Header(showBack = false, onBack = {})
-            SegmentedMode(state.selectedMode, controller::selectHomeMode)
             InfoCard()
             val s = LocalPitchStrings.current
             ModeCard(
@@ -140,6 +171,7 @@ private fun HomeScreen(state: PitchLabUiState, controller: PitchLabController) {
                 color = Purple,
                 onStart = { controller.beginSession(PracticeMode.Target) },
             )
+            TunerEntryCard(controller::openTuner)
             RecentPracticeCard(state.recentSummaries, controller::openHistory)
             SensitivityCard(state.sensitivity, controller::setSensitivity)
             Spacer(Modifier.height(4.dp))
@@ -215,7 +247,41 @@ private fun SettingsScreen(state: PitchLabUiState, controller: PitchLabControlle
 }
 
 @Composable
-private fun SessionScreen(state: PitchLabUiState, controller: PitchLabController) {
+private fun TunerScreen(
+    state: PitchLabUiState,
+    controller: PitchLabController,
+    requestDiscardingAction: (() -> Unit) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(start = 4.dp, top = 8.dp, end = 4.dp, bottom = 4.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Header(showBack = true, onBack = { requestDiscardingAction(controller::backHome) })
+            InstrumentSegment(state.tunerInstrument, controller::setTunerInstrument)
+            AudioInputErrorBanner(state.audioInputError)
+            TunerStatusCard(state)
+            TunerStringsCard(state, controller)
+            Spacer(Modifier.height(4.dp))
+        }
+    }
+}
+
+@Composable
+private fun SessionScreen(
+    state: PitchLabUiState,
+    controller: PitchLabController,
+    requestDiscardingAction: (() -> Unit) -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -230,11 +296,14 @@ private fun SessionScreen(state: PitchLabUiState, controller: PitchLabController
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Header(showBack = true, onBack = controller::backHome)
+            Header(showBack = true, onBack = { requestDiscardingAction(controller::backHome) })
             SegmentedMode(state.selectedMode) { mode ->
-                controller.stop(saveSummary = false)
-                controller.beginSession(mode)
+                requestDiscardingAction {
+                    controller.stop(saveSummary = false)
+                    controller.beginSession(mode)
+                }
             }
+            AudioInputErrorBanner(state.audioInputError)
             if (state.selectedMode == PracticeMode.Target) {
                 TargetSelector(state.target, state.availableTargets, controller::selectTarget)
                 TargetStatusCards(state)
@@ -267,7 +336,7 @@ private fun Header(showBack: Boolean, onBack: () -> Unit) {
             Text(
                 "<",
                 modifier = Modifier
-                    .size(30.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onBack),
                 color = Color.White,
@@ -381,6 +450,153 @@ private fun SegmentButton(text: String, selected: Boolean, modifier: Modifier, o
 }
 
 @Composable
+private fun InstrumentSegment(selected: TunerInstrument, onSelect: (TunerInstrument) -> Unit) {
+    val s = LocalPitchStrings.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(PanelLight)
+            .border(1.dp, Border, RoundedCornerShape(14.dp))
+            .padding(4.dp),
+    ) {
+        SegmentButton(s.guitar, selected == TunerInstrument.Guitar, Modifier.weight(1f)) {
+            onSelect(TunerInstrument.Guitar)
+        }
+        SegmentButton(s.ukulele, selected == TunerInstrument.Ukulele, Modifier.weight(1f)) {
+            onSelect(TunerInstrument.Ukulele)
+        }
+    }
+}
+
+@Composable
+private fun TunerStatusCard(state: PitchLabUiState) {
+    val s = LocalPitchStrings.current
+    val current = state.currentSample
+    val strings = TuningPresets.strings(state.tunerInstrument)
+    val closest = current?.let { sample ->
+        strings.minByOrNull { string -> kotlin.math.abs(PitchMath.centsBetween(sample.frequencyHz, string.target.frequencyHz)) }
+    }
+    val cents = current?.let { sample -> closest?.let { PitchMath.centsBetween(sample.frequencyHz, it.target.frequencyHz) } }
+    val color = cents?.let { PitchClassifier.targetTone(it).color() } ?: Muted
+    PitchPanel(contentPadding = 10.dp) {
+        Text(
+            if (state.isPaused) s.paused else if (state.isRunning) s.recording else s.waiting,
+            color = if (state.isRunning && !state.isPaused) Green else Muted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text(s.detected, color = Muted, fontSize = 11.sp)
+                Text(current?.let { "${it.note}${it.octave}" } ?: "--", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text(current?.let { "${it.frequencyHz.roundToInt()} Hz" } ?: s.waitingPitch, color = Muted, fontSize = 12.sp)
+            }
+            Column(Modifier.weight(1f)) {
+                Text(s.closestString, color = Muted, fontSize = 11.sp)
+                Text(closest?.label ?: "--", color = color, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text(cents?.let { tunerDirection(it, s) } ?: s.waiting, color = color, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AudioInputErrorBanner(error: AudioInputError?) {
+    if (error == null) return
+    val s = LocalPitchStrings.current
+    PitchPanel(contentPadding = 10.dp) {
+        Text(
+            when (error) {
+                AudioInputError.PermissionDenied -> s.microphonePermissionDenied
+                AudioInputError.Unavailable -> s.audioInputUnavailable
+            },
+            color = Red,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun TunerStringsCard(state: PitchLabUiState, controller: PitchLabController) {
+    val s = LocalPitchStrings.current
+    val current = state.currentSample
+    val strings = TuningPresets.strings(state.tunerInstrument)
+    val closest = current?.let { sample ->
+        strings.minByOrNull { string -> kotlin.math.abs(PitchMath.centsBetween(sample.frequencyHz, string.target.frequencyHz)) }
+    }
+    PitchPanel(contentPadding = 10.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${s.strings} · ${if (state.tunerInstrument == TunerInstrument.Guitar) s.guitar else s.ukulele}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Text(s.referenceTone, color = Muted, fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            strings.forEach { string ->
+                val cents = current?.let { PitchMath.centsBetween(it.frequencyHz, string.target.frequencyHz) }
+                TunerStringRow(
+                    string = string,
+                    cents = cents,
+                    isClosest = closest == string,
+                    onPlay = { controller.playReferenceTone(string.target) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TunerStringRow(
+    string: TunerString,
+    cents: Double?,
+    isClosest: Boolean,
+    onPlay: () -> Unit,
+) {
+    val s = LocalPitchStrings.current
+    val activeColor = if (isClosest && cents != null) PitchClassifier.targetTone(cents).color() else Muted
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isClosest) activeColor.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.12f))
+            .border(1.dp, if (isClosest) activeColor.copy(alpha = 0.7f) else Border, RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(activeColor.copy(alpha = 0.16f))
+                .border(1.dp, activeColor, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(string.position.toString(), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(string.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text("${string.target.frequencyHz.roundToInt()} Hz", color = Muted, fontSize = 10.sp)
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(if (isClosest) cents?.let { signedCents(it) } ?: "--" else "--", color = activeColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text(if (isClosest) cents?.let { tunerDirection(it, s) } ?: s.waiting else s.playTone, color = Muted, fontSize = 10.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        TextButton(
+            onClick = onPlay,
+            modifier = Modifier.height(48.dp),
+        ) {
+            Text(s.playTone, color = Purple, fontSize = 11.sp)
+        }
+    }
+}
+
+@Composable
 private fun InfoCard() {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
@@ -422,6 +638,34 @@ private fun ModeCard(title: String, subtitle: String, mode: PracticeMode, color:
             shape = RoundedCornerShape(10.dp),
         ) {
             Text(LocalPitchStrings.current.startTest, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun TunerEntryCard(onStart: () -> Unit) {
+    val s = LocalPitchStrings.current
+    PitchPanel(
+        modifier = Modifier.clickable(onClick = onStart),
+        contentPadding = 10.dp,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Yellow.copy(alpha = 0.16f))
+                    .border(1.dp, Yellow, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("♪", color = Yellow, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(s.tuner, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("${s.guitar} / ${s.ukulele} · ${s.referenceTone}", color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp)
+            }
+            Text(">", color = Color.White, fontSize = 22.sp)
         }
     }
 }
@@ -625,7 +869,6 @@ private fun TransportControls(state: PitchLabUiState, controller: PitchLabContro
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CircleControl(s.mark, "■", onClick = {})
             Box(
                 modifier = Modifier
                     .size(56.dp)
@@ -649,7 +892,7 @@ private fun CircleControl(label: String, glyph: String, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(PanelLight)
                 .border(1.dp, Border, CircleShape)
@@ -752,7 +995,7 @@ private fun SensitivityCard(sensitivity: Float, onSensitivityChange: (Float) -> 
             Spacer(Modifier.width(6.dp))
             Box(
                 modifier = Modifier
-                    .size(18.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .border(1.dp, Muted, CircleShape)
                     .clickable { showInfo = true },
@@ -922,12 +1165,21 @@ private fun signedCents(value: Double): String {
     return if (rounded > 0) "+$rounded cents" else "$rounded cents"
 }
 
+private fun tunerDirection(cents: Double, strings: PitchStrings): String = when {
+    cents > 10.0 -> strings.tuneDown
+    cents < -10.0 -> strings.tuneUp
+    else -> strings.inTune
+}
+
 private fun practiceTitle(item: PracticeSummary, strings: PitchStrings): String =
     if (item.mode == PracticeMode.Free) {
         strings.freePractice
     } else {
         "${strings.targetPracticePrefix} ${item.targetLabel}"
     }
+
+private fun PitchLabUiState.hasUnsavedPractice(): Boolean =
+    screen in setOf(PitchScreen.Session, PitchScreen.Tuner) && isRunning && samples.isNotEmpty()
 
 private fun sensitivityLabel(value: Float, strings: PitchStrings): String = when {
     value < 0.33f -> strings.sensitivityLow

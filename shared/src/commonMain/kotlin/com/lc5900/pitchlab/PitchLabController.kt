@@ -2,6 +2,7 @@ package com.lc5900.pitchlab
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +17,7 @@ data class PitchLabUiState(
     val language: AppLanguage = defaultAppLanguage(),
     val target: TargetNote = PitchMath.target("A4"),
     val availableTargets: List<TargetNote> = PitchMath.targets(),
+    val tunerInstrument: TunerInstrument = TunerInstrument.Guitar,
     val isRunning: Boolean = false,
     val isPaused: Boolean = false,
     val elapsedSeconds: Int = 0,
@@ -25,10 +27,12 @@ data class PitchLabUiState(
     val sensitivity: Float = 0.5f,
     val recentSummaries: List<PracticeSummary> = emptyList(),
     val lastSummary: PracticeSummary? = null,
+    val audioInputError: AudioInputError? = null,
 )
 
 enum class PitchScreen {
     Home,
+    Tuner,
     Session,
     History,
     Settings,
@@ -47,6 +51,7 @@ class PitchLabController(
     private var voicedElapsedSeconds = 0.0
     private var lastVoiceWallMillis: Long? = null
     private var segmentIndex = 0
+    private var referenceToneBlockUntilMillis = 0L
 
     init {
         scope.launch {
@@ -55,10 +60,6 @@ class PitchLabController(
                 language = dependencies.settingsStore.loadLanguage() ?: _state.value.language,
             )
         }
-    }
-
-    fun selectHomeMode(mode: PracticeMode) {
-        _state.value = _state.value.copy(selectedMode = mode)
     }
 
     fun openSession(mode: PracticeMode) {
@@ -76,10 +77,23 @@ class PitchLabController(
     }
 
     fun openHistory() {
+        stop(saveSummary = false)
         _state.value = _state.value.copy(screen = PitchScreen.History)
     }
 
+    fun openTuner() {
+        _state.value = _state.value.copy(
+            screen = PitchScreen.Tuner,
+            selectedMode = PracticeMode.Target,
+            lastSummary = null,
+        )
+        if (!_state.value.isRunning) {
+            startOrResume()
+        }
+    }
+
     fun openSettings() {
+        stop(saveSummary = false)
         _state.value = _state.value.copy(screen = PitchScreen.Settings)
     }
 
@@ -98,14 +112,26 @@ class PitchLabController(
         }
     }
 
+    fun setTunerInstrument(instrument: TunerInstrument) {
+        _state.value = _state.value.copy(tunerInstrument = instrument)
+    }
+
+    fun playReferenceTone(target: TargetNote) {
+        referenceToneBlockUntilMillis = currentTimeMillis() + referenceToneBlockMillis
+        dependencies.referenceTonePlayer.play(target.frequencyHz, _state.value.tunerInstrument)
+    }
+
     fun startOrResume() {
         val current = _state.value
         if (current.isRunning && !current.isPaused) {
+            sessionJob?.cancel()
+            sessionJob = null
             _state.value = current.copy(isPaused = true)
             return
         }
         if (current.isRunning && current.isPaused) {
             _state.value = current.copy(isPaused = false)
+            startAudioCollection()
             return
         }
 
@@ -121,63 +147,82 @@ class PitchLabController(
             currentSample = null,
             stabilityPercent = 0,
             lastSummary = null,
+            audioInputError = null,
         )
         sessionJob?.cancel()
+        startAudioCollection()
+    }
+
+    private fun startAudioCollection() {
         sessionJob = scope.launch {
-            dependencies.audioInput.frames().collect { frame ->
-                val state = _state.value
-                if (!state.isRunning) return@collect
-                if (state.isPaused) return@collect
-                val now = currentTimeMillis()
-                val frequency = if (rms(frame.samples) >= silenceRmsThreshold) {
-                    detector.detect(frame.samples, frame.sampleRate)
-                } else {
-                    null
+            dependencies.audioInput.frames()
+                .catch { throwable ->
+                    val error = (throwable as? AudioInputException)?.reason ?: AudioInputError.Unavailable
+                    _state.value = _state.value.copy(
+                        isRunning = false,
+                        isPaused = false,
+                        currentSample = null,
+                        audioInputError = error,
+                    )
                 }
-                if (frequency == null) {
-                    markSilence(now)
-                    return@collect
+                .collect { frame ->
+                    val state = _state.value
+                    if (!state.isRunning) return@collect
+                    if (state.isPaused) return@collect
+                    val now = currentTimeMillis()
+                    if (now < referenceToneBlockUntilMillis) {
+                        markSilence(now)
+                        return@collect
+                    }
+                    val frequency = if (rms(frame.samples) >= silenceRmsThreshold) {
+                        detector.detect(frame.samples, frame.sampleRate)
+                    } else {
+                        null
+                    }
+                    if (frequency == null) {
+                        markSilence(now)
+                        return@collect
+                    }
+                    val analysis = PitchMath.analyze(frequency)
+                    val lastVoice = lastVoiceWallMillis
+                    if (lastVoice == null || now - lastVoice > silenceGapMillis) {
+                        segmentIndex += 1
+                    }
+                    lastVoiceWallMillis = now
+                    voicedElapsedSeconds += frame.samples.size.toDouble() / frame.sampleRate
+                    val previous = state.samples.takeLast(12).map {
+                        it.centsFromTarget ?: it.centsFromNearest
+                    }
+                    val centsTarget = if (state.selectedMode == PracticeMode.Target) {
+                        PitchMath.centsBetween(frequency, state.target.frequencyHz)
+                    } else {
+                        null
+                    }
+                    val tone = if (state.selectedMode == PracticeMode.Target && centsTarget != null) {
+                        PitchClassifier.targetTone(centsTarget)
+                    } else {
+                        PitchClassifier.freeTone(previous + analysis.centsFromNearest, state.sensitivity)
+                    }
+                    val sample = PitchSample(
+                        elapsedSeconds = voicedElapsedSeconds,
+                        frequencyHz = frequency,
+                        note = analysis.note,
+                        octave = analysis.octave,
+                        midi = analysis.midi,
+                        centsFromNearest = analysis.centsFromNearest,
+                        centsFromTarget = centsTarget,
+                        tone = tone,
+                        segmentIndex = segmentIndex,
+                    )
+                    val samples = (state.samples + sample).takeLast(240)
+                    val stabilitySource = samples.takeLast(24).map { it.centsFromTarget ?: it.centsFromNearest }
+                    _state.value = state.copy(
+                        elapsedSeconds = voicedElapsedSeconds.roundToInt(),
+                        currentSample = sample,
+                        samples = samples,
+                        stabilityPercent = PitchClassifier.stabilityPercent(stabilitySource, state.sensitivity),
+                    )
                 }
-                val analysis = PitchMath.analyze(frequency)
-                val lastVoice = lastVoiceWallMillis
-                if (lastVoice == null || now - lastVoice > silenceGapMillis) {
-                    segmentIndex += 1
-                }
-                lastVoiceWallMillis = now
-                voicedElapsedSeconds += frame.samples.size.toDouble() / frame.sampleRate
-                val previous = state.samples.takeLast(12).map {
-                    it.centsFromTarget ?: it.centsFromNearest
-                }
-                val centsTarget = if (state.selectedMode == PracticeMode.Target) {
-                    PitchMath.centsBetween(frequency, state.target.frequencyHz)
-                } else {
-                    null
-                }
-                val tone = if (state.selectedMode == PracticeMode.Target && centsTarget != null) {
-                    PitchClassifier.targetTone(centsTarget)
-                } else {
-                    PitchClassifier.freeTone(previous + analysis.centsFromNearest, state.sensitivity)
-                }
-                val sample = PitchSample(
-                    elapsedSeconds = voicedElapsedSeconds,
-                    frequencyHz = frequency,
-                    note = analysis.note,
-                    octave = analysis.octave,
-                    midi = analysis.midi,
-                    centsFromNearest = analysis.centsFromNearest,
-                    centsFromTarget = centsTarget,
-                    tone = tone,
-                    segmentIndex = segmentIndex,
-                )
-                val samples = (state.samples + sample).takeLast(240)
-                val stabilitySource = samples.takeLast(24).map { it.centsFromTarget ?: it.centsFromNearest }
-                _state.value = state.copy(
-                    elapsedSeconds = voicedElapsedSeconds.roundToInt(),
-                    currentSample = sample,
-                    samples = samples,
-                    stabilityPercent = PitchClassifier.stabilityPercent(stabilitySource, state.sensitivity),
-                )
-            }
         }
     }
 
@@ -239,6 +284,7 @@ class PitchLabController(
     private companion object {
         const val silenceRmsThreshold = 0.015
         const val silenceGapMillis = 700L
+        const val referenceToneBlockMillis = 1_500L
     }
 }
 
