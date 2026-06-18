@@ -21,15 +21,9 @@ The first production target is Android. iOS and Desktop currently keep the share
 
 ## Screenshots
 
-Screenshots are not committed yet. Recommended GitHub structure:
-
-```text
-docs/screenshots/home-zh.png
-docs/screenshots/free-mode-zh.png
-docs/screenshots/target-mode-zh.png
-```
-
-Then add them here with Markdown image links.
+| Home | Free Mode | Target Mode | Settings |
+| --- | --- | --- | --- |
+| ![Home](docs/screenshots/home-zh.png) | ![Free mode](docs/screenshots/free-mode-zh.png) | ![Target mode](docs/screenshots/target-mode-zh.png) | ![Settings](docs/screenshots/settings-zh.png) |
 
 ## Project Structure
 
