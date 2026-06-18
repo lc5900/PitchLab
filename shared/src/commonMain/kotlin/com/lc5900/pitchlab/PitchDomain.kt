@@ -49,6 +49,17 @@ data class PracticeSummary(
     val passed: Boolean,
 )
 
+enum class TunerInstrument {
+    Guitar,
+    Ukulele,
+}
+
+data class TunerString(
+    val position: Int,
+    val label: String,
+    val target: TargetNote,
+)
+
 data class PitchAnalysis(
     val frequencyHz: Double,
     val note: String,
@@ -88,6 +99,32 @@ object PitchMath {
         }
 
     fun target(label: String): TargetNote = targets().first { it.label == label }
+
+    fun targetFromMidi(midi: Int): TargetNote {
+        val noteIndex = ((midi % 12) + 12) % 12
+        val octave = midi / 12 - 1
+        return TargetNote(noteNames[noteIndex], octave, midiToFrequency(midi))
+    }
+}
+
+object TuningPresets {
+    fun strings(instrument: TunerInstrument): List<TunerString> = when (instrument) {
+        TunerInstrument.Guitar -> listOf(
+            TunerString(6, "E2", PitchMath.targetFromMidi(40)),
+            TunerString(5, "A2", PitchMath.targetFromMidi(45)),
+            TunerString(4, "D3", PitchMath.targetFromMidi(50)),
+            TunerString(3, "G3", PitchMath.targetFromMidi(55)),
+            TunerString(2, "B3", PitchMath.targetFromMidi(59)),
+            TunerString(1, "E4", PitchMath.targetFromMidi(64)),
+        )
+
+        TunerInstrument.Ukulele -> listOf(
+            TunerString(4, "G4", PitchMath.targetFromMidi(67)),
+            TunerString(3, "C4", PitchMath.targetFromMidi(60)),
+            TunerString(2, "E4", PitchMath.targetFromMidi(64)),
+            TunerString(1, "A4", PitchMath.targetFromMidi(69)),
+        )
+    }
 }
 
 object PitchClassifier {

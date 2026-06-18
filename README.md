@@ -8,6 +8,7 @@ The first production target is Android. iOS and Desktop currently keep the share
 
 - Free mode: practice pitch stability without a fixed target note.
 - Target mode: choose a note and check whether the detected pitch is close enough.
+- Instrument tuner: quickly tune standard guitar and ukulele strings, with per-string reference tones on Android.
 - Real-time pitch chart with dynamic pitch range.
 - Color feedback:
   - Green: stable or close to target.
@@ -97,7 +98,7 @@ See [PRIVACY.md](PRIVACY.md) for details.
 
 - Improve target-note selector UX.
 - Add real microphone support for iOS and Desktop.
-- Add screenshot assets and release builds.
+- Add tuner screenshots and release builds.
 - Add persistent settings for more training parameters.
 - Add more pitch detection validation fixtures.
 

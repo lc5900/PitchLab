@@ -15,6 +15,7 @@ actual fun rememberPitchLabDependencies(): PitchLabDependencies =
             audioInput = SimulatedAudioInput(),
             historyStore = MemoryPracticeHistoryStore(),
             settingsStore = MemoryAppSettingsStore(),
+            referenceTonePlayer = NoOpReferenceTonePlayer(),
         )
     }
 
@@ -55,4 +56,8 @@ private class MemoryAppSettingsStore : AppSettingsStore {
     override suspend fun saveLanguage(language: AppLanguage) {
         this.language = language
     }
+}
+
+private class NoOpReferenceTonePlayer : ReferenceTonePlayer {
+    override fun play(frequencyHz: Double, instrument: TunerInstrument) = Unit
 }

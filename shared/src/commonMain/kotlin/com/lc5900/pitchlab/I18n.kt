@@ -14,6 +14,7 @@ data class PitchStrings(
     val freeSubtitle: String,
     val targetSubtitle: String,
     val home: String,
+    val tuner: String,
     val history: String,
     val settings: String,
     val practiceHistory: String,
@@ -68,6 +69,17 @@ data class PitchStrings(
     val simplifiedChinese: String,
     val english: String,
     val backAgainToExit: String,
+    val guitar: String,
+    val ukulele: String,
+    val instrument: String,
+    val referenceTone: String,
+    val playTone: String,
+    val closestString: String,
+    val detected: String,
+    val inTune: String,
+    val tuneUp: String,
+    val tuneDown: String,
+    val strings: String,
 )
 
 val LocalPitchStrings = staticCompositionLocalOf { pitchStrings(AppLanguage.En) }
@@ -80,6 +92,7 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         freeSubtitle = "实时音高稳定性练习",
         targetSubtitle = "目标音音准偏差验证",
         home = "首页",
+        tuner = "调音",
         history = "历史",
         settings = "设置",
         practiceHistory = "练习历史",
@@ -134,6 +147,17 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         simplifiedChinese = "简体中文",
         english = "English",
         backAgainToExit = "再次返回退出 PitchLab",
+        guitar = "吉他",
+        ukulele = "尤克里里",
+        instrument = "乐器",
+        referenceTone = "示范音",
+        playTone = "播放",
+        closestString = "最近弦",
+        detected = "检测音高",
+        inTune = "音准合适",
+        tuneUp = "调高",
+        tuneDown = "调低",
+        strings = "琴弦",
     )
 
     AppLanguage.En -> PitchStrings(
@@ -143,6 +167,7 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         freeSubtitle = "Real-time pitch stability practice",
         targetSubtitle = "Validate pitch against a target note",
         home = "Home",
+        tuner = "Tuner",
         history = "History",
         settings = "Settings",
         practiceHistory = "Practice History",
@@ -197,6 +222,17 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         simplifiedChinese = "简体中文",
         english = "English",
         backAgainToExit = "Press back again to exit PitchLab",
+        guitar = "Guitar",
+        ukulele = "Ukulele",
+        instrument = "Instrument",
+        referenceTone = "Reference Tone",
+        playTone = "Play",
+        closestString = "Closest String",
+        detected = "Detected Pitch",
+        inTune = "In tune",
+        tuneUp = "Tune up",
+        tuneDown = "Tune down",
+        strings = "Strings",
     )
 }
 

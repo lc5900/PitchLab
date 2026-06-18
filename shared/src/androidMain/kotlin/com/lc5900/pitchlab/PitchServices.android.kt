@@ -3,8 +3,10 @@ package com.lc5900.pitchlab
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.AudioTrack
 import android.media.MediaRecorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -16,6 +18,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.concurrent.thread
+import kotlin.math.PI
+import kotlin.math.exp
+import kotlin.math.sin
 
 @Composable
 actual fun rememberPitchLabDependencies(): PitchLabDependencies {
@@ -25,6 +31,7 @@ actual fun rememberPitchLabDependencies(): PitchLabDependencies {
             audioInput = AndroidAudioInput(context),
             historyStore = AndroidPracticeHistoryStore(context),
             settingsStore = AndroidAppSettingsStore(context),
+            referenceTonePlayer = AndroidReferenceTonePlayer(),
         )
     }
 }
@@ -100,6 +107,58 @@ private class AndroidAppSettingsStore(
 
     override suspend fun saveLanguage(language: AppLanguage) {
         preferences.edit().putString("language", language.name).apply()
+    }
+}
+
+private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
+    override fun play(frequencyHz: Double, instrument: TunerInstrument) {
+        thread(name = "PitchLabReferenceTone") {
+            val sampleRate = 44_100
+            val durationMillis = 1_250
+            val sampleCount = sampleRate * durationMillis / 1000
+            val harmonics = if (instrument == TunerInstrument.Guitar) {
+                doubleArrayOf(1.0, 0.62, 0.42, 0.28, 0.2, 0.14)
+            } else {
+                doubleArrayOf(1.0, 0.48, 0.26, 0.14)
+            }
+            val samples = ShortArray(sampleCount) { index ->
+                val time = index.toDouble() / sampleRate
+                val attack = (time / 0.018).coerceIn(0.0, 1.0)
+                val decay = exp(-2.4 * time)
+                val envelope = attack * decay
+                var mixed = 0.0
+                harmonics.forEachIndexed { harmonicIndex, amplitude ->
+                    mixed += sin(2.0 * PI * frequencyHz * (harmonicIndex + 1) * time) * amplitude
+                }
+                val lowBoost = if (frequencyHz < 130.0) 1.25 else 1.0
+                val value = (mixed / harmonics.sum()) * envelope * Short.MAX_VALUE * 0.92 * lowBoost
+                value.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            }
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build(),
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setSampleRate(sampleRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build(),
+                )
+                .setBufferSizeInBytes(samples.size * 2)
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+            try {
+                track.write(samples, 0, samples.size)
+                track.play()
+                Thread.sleep(durationMillis + 80L)
+            } finally {
+                track.release()
+            }
+        }
     }
 }
 

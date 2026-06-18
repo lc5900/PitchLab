@@ -16,6 +16,7 @@ data class PitchLabUiState(
     val language: AppLanguage = defaultAppLanguage(),
     val target: TargetNote = PitchMath.target("A4"),
     val availableTargets: List<TargetNote> = PitchMath.targets(),
+    val tunerInstrument: TunerInstrument = TunerInstrument.Guitar,
     val isRunning: Boolean = false,
     val isPaused: Boolean = false,
     val elapsedSeconds: Int = 0,
@@ -29,6 +30,7 @@ data class PitchLabUiState(
 
 enum class PitchScreen {
     Home,
+    Tuner,
     Session,
     History,
     Settings,
@@ -47,6 +49,7 @@ class PitchLabController(
     private var voicedElapsedSeconds = 0.0
     private var lastVoiceWallMillis: Long? = null
     private var segmentIndex = 0
+    private var referenceToneBlockUntilMillis = 0L
 
     init {
         scope.launch {
@@ -76,10 +79,23 @@ class PitchLabController(
     }
 
     fun openHistory() {
+        stop(saveSummary = false)
         _state.value = _state.value.copy(screen = PitchScreen.History)
     }
 
+    fun openTuner() {
+        _state.value = _state.value.copy(
+            screen = PitchScreen.Tuner,
+            selectedMode = PracticeMode.Target,
+            lastSummary = null,
+        )
+        if (!_state.value.isRunning) {
+            startOrResume()
+        }
+    }
+
     fun openSettings() {
+        stop(saveSummary = false)
         _state.value = _state.value.copy(screen = PitchScreen.Settings)
     }
 
@@ -96,6 +112,15 @@ class PitchLabController(
         scope.launch {
             dependencies.settingsStore.saveLanguage(language)
         }
+    }
+
+    fun setTunerInstrument(instrument: TunerInstrument) {
+        _state.value = _state.value.copy(tunerInstrument = instrument)
+    }
+
+    fun playReferenceTone(target: TargetNote) {
+        referenceToneBlockUntilMillis = currentTimeMillis() + referenceToneBlockMillis
+        dependencies.referenceTonePlayer.play(target.frequencyHz, _state.value.tunerInstrument)
     }
 
     fun startOrResume() {
@@ -129,6 +154,10 @@ class PitchLabController(
                 if (!state.isRunning) return@collect
                 if (state.isPaused) return@collect
                 val now = currentTimeMillis()
+                if (now < referenceToneBlockUntilMillis) {
+                    markSilence(now)
+                    return@collect
+                }
                 val frequency = if (rms(frame.samples) >= silenceRmsThreshold) {
                     detector.detect(frame.samples, frame.sampleRate)
                 } else {
@@ -239,6 +268,7 @@ class PitchLabController(
     private companion object {
         const val silenceRmsThreshold = 0.015
         const val silenceGapMillis = 700L
+        const val referenceToneBlockMillis = 1_500L
     }
 }
 

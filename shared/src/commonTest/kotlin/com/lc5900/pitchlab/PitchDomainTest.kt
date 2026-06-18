@@ -42,6 +42,12 @@ class PitchDomainTest {
     }
 
     @Test
+    fun tuningPresetsExposeStandardStrings() {
+        assertEquals(listOf("E2", "A2", "D3", "G3", "B3", "E4"), TuningPresets.strings(TunerInstrument.Guitar).map { it.label })
+        assertEquals(listOf("G4", "C4", "E4", "A4"), TuningPresets.strings(TunerInstrument.Ukulele).map { it.label })
+    }
+
+    @Test
     fun yinDetectsSyntheticSineWaves() {
         val detector = YinPitchDetector()
         val a4 = detector.detect(sine(440.0), 44_100)

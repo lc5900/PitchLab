@@ -17,10 +17,15 @@ interface AppSettingsStore {
     suspend fun saveLanguage(language: AppLanguage)
 }
 
+interface ReferenceTonePlayer {
+    fun play(frequencyHz: Double, instrument: TunerInstrument)
+}
+
 data class PitchLabDependencies(
     val audioInput: PlatformAudioInput,
     val historyStore: PracticeHistoryStore,
     val settingsStore: AppSettingsStore,
+    val referenceTonePlayer: ReferenceTonePlayer,
 )
 
 @Composable
