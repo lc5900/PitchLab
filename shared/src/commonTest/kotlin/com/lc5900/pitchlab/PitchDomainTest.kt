@@ -1,0 +1,59 @@
+package com.lc5900.pitchlab
+
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.sin
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class PitchDomainTest {
+    @Test
+    fun frequencyToNoteMapsA4AndC4() {
+        val a4 = PitchMath.analyze(440.0)
+        assertEquals("A", a4.note)
+        assertEquals(4, a4.octave)
+        assertEquals(0.0, a4.centsFromNearest, absoluteTolerance = 0.01)
+
+        val c4 = PitchMath.analyze(261.63)
+        assertEquals("C", c4.note)
+        assertEquals(4, c4.octave)
+        assertTrue(abs(c4.centsFromNearest) < 0.1)
+    }
+
+    @Test
+    fun centsDirectionIsSigned() {
+        assertTrue(PitchMath.centsBetween(445.0, 440.0) > 0.0)
+        assertTrue(PitchMath.centsBetween(435.0, 440.0) < 0.0)
+    }
+
+    @Test
+    fun targetToneThresholdsMatchPlan() {
+        assertEquals(PitchTone.Green, PitchClassifier.targetTone(10.0))
+        assertEquals(PitchTone.Yellow, PitchClassifier.targetTone(15.0))
+        assertEquals(PitchTone.Red, PitchClassifier.targetTone(21.0))
+    }
+
+    @Test
+    fun freeModeStabilityDetectsCalmAndWobblyInput() {
+        assertEquals(PitchTone.Green, PitchClassifier.freeTone(listOf(1.0, 2.0, -1.0, 0.5, -0.5)))
+        assertEquals(PitchTone.Yellow, PitchClassifier.freeTone(listOf(-35.0, 30.0, -28.0, 34.0, 0.0)))
+    }
+
+    @Test
+    fun yinDetectsSyntheticSineWaves() {
+        val detector = YinPitchDetector()
+        val a4 = detector.detect(sine(440.0), 44_100)
+        val c4 = detector.detect(sine(261.63), 44_100)
+        assertNotNull(a4)
+        assertNotNull(c4)
+        assertTrue(abs(a4 - 440.0) < 3.0)
+        assertTrue(abs(c4 - 261.63) < 3.0)
+    }
+
+    private fun sine(frequency: Double, sampleRate: Int = 44_100, size: Int = 4096): FloatArray =
+        FloatArray(size) { index ->
+            sin(2.0 * PI * frequency * index / sampleRate).toFloat()
+        }
+}
