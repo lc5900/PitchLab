@@ -15,6 +15,8 @@ data class PitchLabUiState(
     val screen: PitchScreen = PitchScreen.Home,
     val selectedMode: PracticeMode = PracticeMode.Free,
     val language: AppLanguage = defaultAppLanguage(),
+    val referencePitchHz: Int = 440,
+    val chartWindowSeconds: Int = 15,
     val target: TargetNote = PitchMath.target("A4"),
     val availableTargets: List<TargetNote> = PitchMath.targets(),
     val tunerInstrument: TunerInstrument = TunerInstrument.Guitar,
@@ -55,9 +57,15 @@ class PitchLabController(
 
     init {
         scope.launch {
+            val referencePitch = dependencies.settingsStore.loadReferencePitchHz()?.coerceIn(432, 446) ?: _state.value.referencePitchHz
             _state.value = _state.value.copy(
                 recentSummaries = dependencies.historyStore.loadRecent(),
                 language = dependencies.settingsStore.loadLanguage() ?: _state.value.language,
+                sensitivity = dependencies.settingsStore.loadSensitivity()?.coerceIn(0f, 1f) ?: _state.value.sensitivity,
+                chartWindowSeconds = dependencies.settingsStore.loadChartWindowSeconds()?.takeIf { it in chartWindowOptions } ?: _state.value.chartWindowSeconds,
+                referencePitchHz = referencePitch,
+                availableTargets = PitchMath.targets(referencePitchHz = referencePitch),
+                target = PitchMath.target(_state.value.target.label, referencePitch),
             )
         }
     }
@@ -102,7 +110,32 @@ class PitchLabController(
     }
 
     fun setSensitivity(value: Float) {
-        _state.value = _state.value.copy(sensitivity = value.coerceIn(0f, 1f))
+        val sensitivity = value.coerceIn(0f, 1f)
+        _state.value = _state.value.copy(sensitivity = sensitivity)
+        scope.launch {
+            dependencies.settingsStore.saveSensitivity(sensitivity)
+        }
+    }
+
+    fun setReferencePitchHz(value: Int) {
+        val referencePitch = value.coerceIn(432, 446)
+        val current = _state.value
+        _state.value = current.copy(
+            referencePitchHz = referencePitch,
+            availableTargets = PitchMath.targets(referencePitchHz = referencePitch),
+            target = PitchMath.target(current.target.label, referencePitch),
+        )
+        scope.launch {
+            dependencies.settingsStore.saveReferencePitchHz(referencePitch)
+        }
+    }
+
+    fun setChartWindowSeconds(seconds: Int) {
+        val chartWindow = seconds.takeIf { it in chartWindowOptions } ?: 15
+        _state.value = _state.value.copy(chartWindowSeconds = chartWindow)
+        scope.launch {
+            dependencies.settingsStore.saveChartWindowSeconds(chartWindow)
+        }
     }
 
     fun setLanguage(language: AppLanguage) {
@@ -114,6 +147,13 @@ class PitchLabController(
 
     fun setTunerInstrument(instrument: TunerInstrument) {
         _state.value = _state.value.copy(tunerInstrument = instrument)
+    }
+
+    fun clearHistory() {
+        scope.launch {
+            dependencies.historyStore.clear()
+            _state.value = _state.value.copy(recentSummaries = emptyList())
+        }
     }
 
     fun playReferenceTone(target: TargetNote) {
@@ -183,7 +223,7 @@ class PitchLabController(
                         markSilence(now)
                         return@collect
                     }
-                    val analysis = PitchMath.analyze(frequency)
+                val analysis = PitchMath.analyze(frequency, state.referencePitchHz)
                     val lastVoice = lastVoiceWallMillis
                     if (lastVoice == null || now - lastVoice > silenceGapMillis) {
                         segmentIndex += 1
@@ -285,6 +325,7 @@ class PitchLabController(
         const val silenceRmsThreshold = 0.015
         const val silenceGapMillis = 700L
         const val referenceToneBlockMillis = 1_500L
+        val chartWindowOptions = setOf(10, 15, 30)
     }
 }
 

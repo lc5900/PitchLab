@@ -10,11 +10,18 @@ interface PlatformAudioInput {
 interface PracticeHistoryStore {
     suspend fun loadRecent(): List<PracticeSummary>
     suspend fun save(summary: PracticeSummary)
+    suspend fun clear()
 }
 
 interface AppSettingsStore {
     suspend fun loadLanguage(): AppLanguage?
     suspend fun saveLanguage(language: AppLanguage)
+    suspend fun loadSensitivity(): Float?
+    suspend fun saveSensitivity(sensitivity: Float)
+    suspend fun loadReferencePitchHz(): Int?
+    suspend fun saveReferencePitchHz(referencePitchHz: Int)
+    suspend fun loadChartWindowSeconds(): Int?
+    suspend fun saveChartWindowSeconds(seconds: Int)
 }
 
 interface ReferenceTonePlayer {

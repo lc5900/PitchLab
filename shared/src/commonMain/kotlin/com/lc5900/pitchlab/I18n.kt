@@ -65,6 +65,8 @@ data class PitchStrings(
     val sensitivityDefault: String,
     val sensitivityHigh: String,
     val standardPitch: String,
+    val referencePitchRange: String,
+    val chartWindow: String,
     val language: String,
     val simplifiedChinese: String,
     val english: String,
@@ -88,6 +90,10 @@ data class PitchStrings(
     val cancel: String,
     val recording: String,
     val paused: String,
+    val clearHistory: String,
+    val pitchChartDescription: String,
+    val miniChartDescription: String,
+    val back: String,
 )
 
 val LocalPitchStrings = staticCompositionLocalOf { pitchStrings(AppLanguage.En) }
@@ -151,6 +157,8 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         sensitivityDefault = "默认（中等）",
         sensitivityHigh = "高（严格）",
         standardPitch = "标准音",
+        referencePitchRange = "A4 标准音（432-446 Hz）",
+        chartWindow = "图表窗口",
         language = "语言",
         simplifiedChinese = "简体中文",
         english = "English",
@@ -174,6 +182,10 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         cancel = "取消",
         recording = "录音中",
         paused = "已暂停",
+        clearHistory = "清空",
+        pitchChartDescription = "实时音高曲线图",
+        miniChartDescription = "音高变化预览图",
+        back = "返回",
     )
 
     AppLanguage.En -> PitchStrings(
@@ -234,6 +246,8 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         sensitivityDefault = "Default (medium)",
         sensitivityHigh = "High (strict)",
         standardPitch = "Standard Pitch",
+        referencePitchRange = "A4 reference pitch (432-446 Hz)",
+        chartWindow = "Chart Window",
         language = "Language",
         simplifiedChinese = "简体中文",
         english = "English",
@@ -257,6 +271,10 @@ fun pitchStrings(language: AppLanguage): PitchStrings = when (language) {
         cancel = "Cancel",
         recording = "Recording",
         paused = "Paused",
+        clearHistory = "Clear",
+        pitchChartDescription = "Real-time pitch line chart",
+        miniChartDescription = "Pitch movement preview chart",
+        back = "Back",
     )
 }
 

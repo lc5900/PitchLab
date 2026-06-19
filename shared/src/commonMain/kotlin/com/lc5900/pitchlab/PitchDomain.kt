@@ -76,64 +76,63 @@ data class AudioFrame(
 object PitchMath {
     private val noteNames = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-    fun analyze(frequencyHz: Double): PitchAnalysis {
-        val midiFloat = 69.0 + 12.0 * log2(frequencyHz / 440.0)
+    fun analyze(frequencyHz: Double, referencePitchHz: Int = 440): PitchAnalysis {
+        val midiFloat = 69.0 + 12.0 * log2(frequencyHz / referencePitchHz.toDouble())
         val midi = midiFloat.roundToInt()
         val noteIndex = ((midi % 12) + 12) % 12
         val octave = midi / 12 - 1
-        val nearestFrequency = midiToFrequency(midi)
+        val nearestFrequency = midiToFrequency(midi, referencePitchHz)
         val cents = centsBetween(frequencyHz, nearestFrequency)
         return PitchAnalysis(frequencyHz, noteNames[noteIndex], octave, midi, cents)
     }
 
-    fun midiToFrequency(midi: Int): Double = 440.0 * 2.0.pow((midi - 69) / 12.0)
+    fun midiToFrequency(midi: Int, referencePitchHz: Int = 440): Double =
+        referencePitchHz.toDouble() * 2.0.pow((midi - 69) / 12.0)
 
     fun centsBetween(frequencyHz: Double, targetFrequencyHz: Double): Double =
         1200.0 * ln(frequencyHz / targetFrequencyHz) / ln(2.0)
 
-    fun targets(fromOctave: Int = 3, toOctave: Int = 6): List<TargetNote> =
+    fun targets(fromOctave: Int = 3, toOctave: Int = 6, referencePitchHz: Int = 440): List<TargetNote> =
         (fromOctave..toOctave).flatMap { octave ->
             noteNames.mapIndexed { index, note ->
-                TargetNote(note, octave, midiToFrequency((octave + 1) * 12 + index))
+                TargetNote(note, octave, midiToFrequency((octave + 1) * 12 + index, referencePitchHz))
             }
         }
 
-    fun targetOrNull(label: String): TargetNote? = targets().firstOrNull { it.label == label }
+    fun targetOrNull(label: String, referencePitchHz: Int = 440): TargetNote? =
+        targets(referencePitchHz = referencePitchHz).firstOrNull { it.label == label }
 
-    fun target(label: String): TargetNote =
-        targetOrNull(label) ?: TargetNote("A", 4, 440.0)
+    fun target(label: String, referencePitchHz: Int = 440): TargetNote =
+        targetOrNull(label, referencePitchHz) ?: TargetNote("A", 4, referencePitchHz.toDouble())
 
-    fun targetFromMidi(midi: Int): TargetNote {
+    fun targetFromMidi(midi: Int, referencePitchHz: Int = 440): TargetNote {
         val noteIndex = ((midi % 12) + 12) % 12
         val octave = midi / 12 - 1
-        return TargetNote(noteNames[noteIndex], octave, midiToFrequency(midi))
+        return TargetNote(noteNames[noteIndex], octave, midiToFrequency(midi, referencePitchHz))
     }
 }
 
 object TuningPresets {
-    fun strings(instrument: TunerInstrument): List<TunerString> = when (instrument) {
+    fun strings(instrument: TunerInstrument, referencePitchHz: Int = 440): List<TunerString> = when (instrument) {
         TunerInstrument.Guitar -> listOf(
-            TunerString(6, "E2", PitchMath.targetFromMidi(40)),
-            TunerString(5, "A2", PitchMath.targetFromMidi(45)),
-            TunerString(4, "D3", PitchMath.targetFromMidi(50)),
-            TunerString(3, "G3", PitchMath.targetFromMidi(55)),
-            TunerString(2, "B3", PitchMath.targetFromMidi(59)),
-            TunerString(1, "E4", PitchMath.targetFromMidi(64)),
+            TunerString(6, "E2", PitchMath.targetFromMidi(40, referencePitchHz)),
+            TunerString(5, "A2", PitchMath.targetFromMidi(45, referencePitchHz)),
+            TunerString(4, "D3", PitchMath.targetFromMidi(50, referencePitchHz)),
+            TunerString(3, "G3", PitchMath.targetFromMidi(55, referencePitchHz)),
+            TunerString(2, "B3", PitchMath.targetFromMidi(59, referencePitchHz)),
+            TunerString(1, "E4", PitchMath.targetFromMidi(64, referencePitchHz)),
         )
 
         TunerInstrument.Ukulele -> listOf(
-            TunerString(4, "G4", PitchMath.targetFromMidi(67)),
-            TunerString(3, "C4", PitchMath.targetFromMidi(60)),
-            TunerString(2, "E4", PitchMath.targetFromMidi(64)),
-            TunerString(1, "A4", PitchMath.targetFromMidi(69)),
+            TunerString(4, "G4", PitchMath.targetFromMidi(67, referencePitchHz)),
+            TunerString(3, "C4", PitchMath.targetFromMidi(60, referencePitchHz)),
+            TunerString(2, "E4", PitchMath.targetFromMidi(64, referencePitchHz)),
+            TunerString(1, "A4", PitchMath.targetFromMidi(69, referencePitchHz)),
         )
     }
 }
 
 object PitchClassifier {
-    private const val stableCents = 12.0
-    private const val unstableCents = 28.0
-
     fun targetTone(centsFromTarget: Double): PitchTone {
         val absCents = abs(centsFromTarget)
         return when {

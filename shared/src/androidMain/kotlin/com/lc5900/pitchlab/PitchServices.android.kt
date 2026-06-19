@@ -129,6 +129,27 @@ private class AndroidAppSettingsStore(
     override suspend fun saveLanguage(language: AppLanguage) {
         preferences.edit().putString("language", language.name).apply()
     }
+
+    override suspend fun loadSensitivity(): Float? =
+        preferences.takeIf { it.contains("sensitivity") }?.getFloat("sensitivity", 0.5f)
+
+    override suspend fun saveSensitivity(sensitivity: Float) {
+        preferences.edit().putFloat("sensitivity", sensitivity).apply()
+    }
+
+    override suspend fun loadReferencePitchHz(): Int? =
+        preferences.takeIf { it.contains("reference_pitch_hz") }?.getInt("reference_pitch_hz", 440)
+
+    override suspend fun saveReferencePitchHz(referencePitchHz: Int) {
+        preferences.edit().putInt("reference_pitch_hz", referencePitchHz).apply()
+    }
+
+    override suspend fun loadChartWindowSeconds(): Int? =
+        preferences.takeIf { it.contains("chart_window_seconds") }?.getInt("chart_window_seconds", 15)
+
+    override suspend fun saveChartWindowSeconds(seconds: Int) {
+        preferences.edit().putInt("chart_window_seconds", seconds).apply()
+    }
 }
 
 private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
@@ -223,15 +244,19 @@ private class AndroidPracticeHistoryStore(
         preferences.getStringSet("items", emptySet()).orEmpty()
             .mapNotNull { it.toPracticeSummaryOrNull() }
             .sortedByDescending { it.startedAtMillis }
-            .take(5)
+            .take(historyLimit)
 
     override suspend fun save(summary: PracticeSummary) {
         val next = (loadRecent() + summary)
             .sortedByDescending { it.startedAtMillis }
-            .take(5)
+            .take(historyLimit)
             .map { it.encode() }
             .toSet()
         preferences.edit().putStringSet("items", next).apply()
+    }
+
+    override suspend fun clear() {
+        preferences.edit().remove("items").apply()
     }
 
     private fun PracticeSummary.encode(): String = listOf(
@@ -258,5 +283,9 @@ private class AndroidPracticeHistoryStore(
                 passed = parts[6].toBoolean(),
             )
         }.getOrNull()
+    }
+
+    private companion object {
+        const val historyLimit = 20
     }
 }

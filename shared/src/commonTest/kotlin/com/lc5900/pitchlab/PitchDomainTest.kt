@@ -31,7 +31,10 @@ class PitchDomainTest {
     @Test
     fun targetToneThresholdsMatchPlan() {
         assertEquals(PitchTone.Green, PitchClassifier.targetTone(10.0))
+        assertEquals(PitchTone.Yellow, PitchClassifier.targetTone(10.01))
+        assertEquals(PitchTone.Yellow, PitchClassifier.targetTone(20.0))
         assertEquals(PitchTone.Yellow, PitchClassifier.targetTone(15.0))
+        assertEquals(PitchTone.Red, PitchClassifier.targetTone(20.01))
         assertEquals(PitchTone.Red, PitchClassifier.targetTone(21.0))
     }
 
@@ -39,12 +42,15 @@ class PitchDomainTest {
     fun freeModeStabilityDetectsCalmAndWobblyInput() {
         assertEquals(PitchTone.Green, PitchClassifier.freeTone(listOf(1.0, 2.0, -1.0, 0.5, -0.5)))
         assertEquals(PitchTone.Yellow, PitchClassifier.freeTone(listOf(-35.0, 30.0, -28.0, 34.0, 0.0)))
+        assertTrue(PitchClassifier.stabilityPercent(listOf(0.0, 1.0, -1.0, 0.5), sensitivity = 0.5f) > 90)
+        assertTrue(PitchClassifier.stabilityPercent(listOf(-40.0, 35.0, -30.0, 45.0), sensitivity = 0.5f) < 30)
     }
 
     @Test
     fun tuningPresetsExposeStandardStrings() {
         assertEquals(listOf("E2", "A2", "D3", "G3", "B3", "E4"), TuningPresets.strings(TunerInstrument.Guitar).map { it.label })
         assertEquals(listOf("G4", "C4", "E4", "A4"), TuningPresets.strings(TunerInstrument.Ukulele).map { it.label })
+        assertTrue(TuningPresets.strings(TunerInstrument.Guitar, referencePitchHz = 442).first().target.frequencyHz > TuningPresets.strings(TunerInstrument.Guitar).first().target.frequencyHz)
     }
 
     @Test
@@ -52,6 +58,7 @@ class PitchDomainTest {
         assertEquals("A4", PitchMath.target("not-a-note").label)
         assertEquals(null, PitchMath.targetOrNull("not-a-note"))
         assertEquals("E2", PitchMath.targetFromMidi(40).label)
+        assertEquals(442.0, PitchMath.target("A4", referencePitchHz = 442).frequencyHz, absoluteTolerance = 0.01)
     }
 
     @Test
@@ -63,6 +70,13 @@ class PitchDomainTest {
         assertNotNull(c4)
         assertTrue(abs(a4 - 440.0) < 3.0)
         assertTrue(abs(c4 - 261.63) < 3.0)
+    }
+
+    @Test
+    fun yinRejectsSilentAndTooShortInput() {
+        val detector = YinPitchDetector()
+        assertEquals(null, detector.detect(FloatArray(16), 44_100))
+        assertEquals(null, detector.detect(FloatArray(4096), 44_100))
     }
 
     private fun sine(frequency: Double, sampleRate: Int = 44_100, size: Int = 4096): FloatArray =

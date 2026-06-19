@@ -45,17 +45,42 @@ private class MemoryPracticeHistoryStore : PracticeHistoryStore {
     override suspend fun loadRecent(): List<PracticeSummary> = items
 
     override suspend fun save(summary: PracticeSummary) {
-        items = (listOf(summary) + items).take(5)
+        items = (listOf(summary) + items).take(20)
+    }
+
+    override suspend fun clear() {
+        items = emptyList()
     }
 }
 
 private class MemoryAppSettingsStore : AppSettingsStore {
     private var language: AppLanguage? = null
+    private var sensitivity: Float? = null
+    private var referencePitchHz: Int? = null
+    private var chartWindowSeconds: Int? = null
 
     override suspend fun loadLanguage(): AppLanguage? = language
 
     override suspend fun saveLanguage(language: AppLanguage) {
         this.language = language
+    }
+
+    override suspend fun loadSensitivity(): Float? = sensitivity
+
+    override suspend fun saveSensitivity(sensitivity: Float) {
+        this.sensitivity = sensitivity
+    }
+
+    override suspend fun loadReferencePitchHz(): Int? = referencePitchHz
+
+    override suspend fun saveReferencePitchHz(referencePitchHz: Int) {
+        this.referencePitchHz = referencePitchHz
+    }
+
+    override suspend fun loadChartWindowSeconds(): Int? = chartWindowSeconds
+
+    override suspend fun saveChartWindowSeconds(seconds: Int) {
+        this.chartWindowSeconds = seconds
     }
 }
 

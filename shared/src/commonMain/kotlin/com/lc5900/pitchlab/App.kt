@@ -38,6 +38,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +52,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -67,7 +70,6 @@ private val Green = Color(0xFF68D957)
 private val Yellow = Color(0xFFFFC44F)
 private val Red = Color(0xFFFF6666)
 private val Muted = Color(0xFF9AA0AC)
-private const val ChartWindowSeconds = 15.0
 
 @Composable
 @Preview
@@ -198,14 +200,25 @@ private fun HistoryScreen(state: PitchLabUiState, controller: PitchLabController
         ) {
             Header(showBack = true, onBack = controller::backHome)
             val s = LocalPitchStrings.current
-            Text(s.practiceHistory, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(s.practiceHistory, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                TextButton(
+                    onClick = controller::clearHistory,
+                    enabled = state.recentSummaries.isNotEmpty(),
+                ) {
+                    Text(s.clearHistory, color = if (state.recentSummaries.isNotEmpty()) Red else Muted, fontSize = 12.sp)
+                }
+            }
             if (state.recentSummaries.isEmpty()) {
                 PitchPanel(contentPadding = 12.dp) {
                     Text(s.noHistory, color = Muted, fontSize = 12.sp)
                 }
             } else {
                 state.recentSummaries.forEach { item ->
-                    HistoryItem(item)
+                    key(item.startedAtMillis) {
+                        HistoryItem(item)
+                    }
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -235,11 +248,8 @@ private fun SettingsScreen(state: PitchLabUiState, controller: PitchLabControlle
             Text(s.settings, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             LanguageCard(state.language, controller::setLanguage)
             SensitivityCard(state.sensitivity, controller::setSensitivity)
-            PitchPanel(contentPadding = 12.dp) {
-                Text(s.standardPitch, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(6.dp))
-                Text("A4 = 440 Hz", color = Muted, fontSize = 12.sp)
-            }
+            ReferencePitchCard(state.referencePitchHz, controller::setReferencePitchHz)
+            ChartWindowCard(state.chartWindowSeconds, controller::setChartWindowSeconds)
             Spacer(Modifier.height(4.dp))
         }
         BottomNav(PitchScreen.Settings, controller)
@@ -328,6 +338,7 @@ private fun SessionScreen(
 
 @Composable
 private fun Header(showBack: Boolean, onBack: () -> Unit) {
+    val s = LocalPitchStrings.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -338,6 +349,7 @@ private fun Header(showBack: Boolean, onBack: () -> Unit) {
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
+                    .semantics { contentDescription = s.back }
                     .clickable(onClick = onBack),
                 color = Color.White,
                 fontSize = 22.sp,
@@ -349,7 +361,7 @@ private fun Header(showBack: Boolean, onBack: () -> Unit) {
         }
         Text("PitchLab", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Spacer(Modifier.width(6.dp))
-        Text(LocalPitchStrings.current.labName, color = Color.White.copy(alpha = 0.82f), fontSize = 12.sp)
+        Text(s.labName, color = Color.White.copy(alpha = 0.82f), fontSize = 12.sp)
         Spacer(Modifier.weight(1f))
         Text("🎙", fontSize = 18.sp)
     }
@@ -474,7 +486,7 @@ private fun InstrumentSegment(selected: TunerInstrument, onSelect: (TunerInstrum
 private fun TunerStatusCard(state: PitchLabUiState) {
     val s = LocalPitchStrings.current
     val current = state.currentSample
-    val strings = TuningPresets.strings(state.tunerInstrument)
+    val strings = TuningPresets.strings(state.tunerInstrument, state.referencePitchHz)
     val closest = current?.let { sample ->
         strings.minByOrNull { string -> kotlin.math.abs(PitchMath.centsBetween(sample.frequencyHz, string.target.frequencyHz)) }
     }
@@ -524,7 +536,7 @@ private fun AudioInputErrorBanner(error: AudioInputError?) {
 private fun TunerStringsCard(state: PitchLabUiState, controller: PitchLabController) {
     val s = LocalPitchStrings.current
     val current = state.currentSample
-    val strings = TuningPresets.strings(state.tunerInstrument)
+    val strings = TuningPresets.strings(state.tunerInstrument, state.referencePitchHz)
     val closest = current?.let { sample ->
         strings.minByOrNull { string -> kotlin.math.abs(PitchMath.centsBetween(sample.frequencyHz, string.target.frequencyHz)) }
     }
@@ -538,14 +550,77 @@ private fun TunerStringsCard(state: PitchLabUiState, controller: PitchLabControl
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             strings.forEach { string ->
                 val cents = current?.let { PitchMath.centsBetween(it.frequencyHz, string.target.frequencyHz) }
-                TunerStringRow(
-                    string = string,
-                    cents = cents,
-                    isClosest = closest == string,
-                    onPlay = { controller.playReferenceTone(string.target) },
+                key(string.position, string.label) {
+                    TunerStringRow(
+                        string = string,
+                        cents = cents,
+                        isClosest = closest == string,
+                        onPlay = { controller.playReferenceTone(string.target) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReferencePitchCard(referencePitchHz: Int, onReferencePitchChange: (Int) -> Unit) {
+    val s = LocalPitchStrings.current
+    PitchPanel(contentPadding = 12.dp) {
+        Text(s.standardPitch, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(s.referencePitchRange, color = Muted, fontSize = 11.sp)
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StepperButton("-", enabled = referencePitchHz > 432) {
+                onReferencePitchChange(referencePitchHz - 1)
+            }
+            Text(
+                "A4 = $referencePitchHz Hz",
+                modifier = Modifier.weight(1f),
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+            )
+            StepperButton("+", enabled = referencePitchHz < 446) {
+                onReferencePitchChange(referencePitchHz + 1)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChartWindowCard(chartWindowSeconds: Int, onChartWindowChange: (Int) -> Unit) {
+    val s = LocalPitchStrings.current
+    PitchPanel(contentPadding = 12.dp) {
+        Text(s.chartWindow, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            listOf(10, 15, 30).forEach { seconds ->
+                LanguageButton(
+                    text = "${seconds}s",
+                    selected = chartWindowSeconds == seconds,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onChartWindowChange(seconds) },
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun StepperButton(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(if (enabled) PanelLight else PanelLight.copy(alpha = 0.45f))
+            .border(1.dp, Border, CircleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = if (enabled) Color.White else Muted, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -741,35 +816,19 @@ private fun StatusTile(title: String, value: String, color: Color, modifier: Mod
 @Composable
 private fun PitchChart(state: PitchLabUiState) {
     val s = LocalPitchStrings.current
-    val targetPitch = if (state.selectedMode == PracticeMode.Target) {
-        PitchMath.analyze(state.target.frequencyHz).midi.toDouble()
-    } else {
-        null
+    val chartData = remember(state.samples, state.selectedMode, state.target, state.referencePitchHz) {
+        pitchChartData(state)
     }
-    val plottedPitches = state.samples.map { it.midi + it.centsFromNearest / 100.0 }
-    val centerPitch = plottedPitches.lastOrNull() ?: targetPitch ?: PitchMath.analyze(440.0).midi.toDouble()
-    val dynamicPitches = plottedPitches.takeLast(120) + listOfNotNull(targetPitch, centerPitch)
-    val rawMin = dynamicPitches.minOrNull() ?: centerPitch
-    val rawMax = dynamicPitches.maxOrNull() ?: centerPitch
-    val paddedMin = rawMin - 3.0
-    val paddedMax = rawMax + 3.0
-    val minSpan = 14.0
-    val rangeCenter = (paddedMin + paddedMax) / 2.0
-    val minMidi = if (paddedMax - paddedMin < minSpan) rangeCenter - minSpan / 2.0 else paddedMin
-    val maxMidi = if (paddedMax - paddedMin < minSpan) rangeCenter + minSpan / 2.0 else paddedMax
-    val latestSecond = state.samples.lastOrNull()?.elapsedSeconds ?: 0.0
-    val windowStart = (latestSecond - ChartWindowSeconds).coerceAtLeast(0.0)
-    val windowEnd = windowStart + ChartWindowSeconds
     Column {
         Text(s.pitchSemitone, color = Muted, fontSize = 11.sp)
         Spacer(Modifier.height(2.dp))
-        Box(Modifier.fillMaxWidth().height(210.dp)) {
+        Box(Modifier.fillMaxWidth().height(210.dp).semantics { contentDescription = s.pitchChartDescription }) {
             Row(Modifier.fillMaxSize()) {
                 Column(
                     modifier = Modifier.width(30.dp).fillMaxHeight(),
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    dynamicYAxisLabels(minMidi, maxMidi).forEach {
+                    dynamicYAxisLabels(chartData.minMidi, chartData.maxMidi).forEach {
                         Text(it, color = Color.White.copy(alpha = 0.75f), fontSize = 10.sp)
                     }
                 }
@@ -783,19 +842,18 @@ private fun PitchChart(state: PitchLabUiState) {
                         val y = size.height * index / 8f
                         drawLine(grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
                     }
-                    if (targetPitch != null) {
-                        val y = midiToY(targetPitch, minMidi, maxMidi, size.height)
+                    if (chartData.targetPitch != null) {
+                        val y = midiToY(chartData.targetPitch, chartData.minMidi, chartData.maxMidi, size.height)
                         drawLine(Color.White.copy(alpha = 0.55f), Offset(0f, y), Offset(size.width, y), strokeWidth = 1.3f)
                     }
-                    val visible = state.samples.filter { it.elapsedSeconds in windowStart..windowEnd }
-                    visible.zipWithNext().forEach { (from, to) ->
-                        val x1 = ((from.elapsedSeconds - windowStart) / ChartWindowSeconds * size.width).toFloat()
-                        val x2 = ((to.elapsedSeconds - windowStart) / ChartWindowSeconds * size.width).toFloat()
+                    chartData.visibleSamples.zipWithNext().forEach { (from, to) ->
+                        val x1 = ((from.elapsedSeconds - chartData.windowStart) / state.chartWindowSeconds * size.width).toFloat()
+                        val x2 = ((to.elapsedSeconds - chartData.windowStart) / state.chartWindowSeconds * size.width).toFloat()
                         if (x2 >= x1 && from.segmentIndex == to.segmentIndex) {
                             drawLine(
                                 color = to.tone.color(),
-                                start = Offset(x1, midiToY(from.midi + from.centsFromNearest / 100.0, minMidi, maxMidi, size.height)),
-                                end = Offset(x2, midiToY(to.midi + to.centsFromNearest / 100.0, minMidi, maxMidi, size.height)),
+                                start = Offset(x1, midiToY(from.midi + from.centsFromNearest / 100.0, chartData.minMidi, chartData.maxMidi, size.height)),
+                                end = Offset(x2, midiToY(to.midi + to.centsFromNearest / 100.0, chartData.minMidi, chartData.maxMidi, size.height)),
                                 strokeWidth = 3.2f,
                                 cap = StrokeCap.Round,
                             )
@@ -806,7 +864,7 @@ private fun PitchChart(state: PitchLabUiState) {
         }
         Row(Modifier.fillMaxWidth().padding(start = 32.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             (0..5).forEach { index ->
-                val second = windowStart + index * ChartWindowSeconds / 5.0
+                val second = chartData.windowStart + index * state.chartWindowSeconds / 5.0
                 Text(second.roundToInt().toString(), color = Muted, fontSize = 10.sp)
             }
         }
@@ -927,14 +985,16 @@ private fun RecentPracticeCard(items: List<PracticeSummary>, onViewAll: () -> Un
             Text(s.noHistory, color = Muted, fontSize = 11.sp)
         } else {
             items.take(3).forEach { item ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    WaveIcon(if (item.passed) Green else Yellow)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(practiceTitle(item, s), color = Color.White, fontSize = 12.sp)
-                        Text("${item.durationSeconds.formatDuration()} · ${s.stability} ${item.stabilityPercent}%", color = Muted, fontSize = 10.sp)
+                key(item.startedAtMillis) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        WaveIcon(if (item.passed) Green else Yellow)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(practiceTitle(item, s), color = Color.White, fontSize = 12.sp)
+                            Text("${item.durationSeconds.formatDuration()} · ${s.stability} ${item.stabilityPercent}%", color = Muted, fontSize = 10.sp)
+                        }
+                        Text("${item.stabilityPercent}%", color = item.stabilityPercent.stabilityColor(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
-                    Text("${item.stabilityPercent}%", color = item.stabilityPercent.stabilityColor(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1091,11 +1151,13 @@ private fun PitchPanel(
 
 @Composable
 private fun MiniChart(mode: PracticeMode) {
+    val s = LocalPitchStrings.current
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
+            .semantics { contentDescription = s.miniChartDescription }
             .background(Color.Black.copy(alpha = 0.16f)),
     ) {
         val points = List(42) { index ->
@@ -1112,7 +1174,7 @@ private fun MiniChart(mode: PracticeMode) {
 
 @Composable
 private fun WaveIcon(color: Color) {
-    Canvas(Modifier.size(34.dp)) {
+    Canvas(Modifier.size(34.dp).semantics { contentDescription = "Pitch wave" }) {
         val mid = size.height / 2f
         val step = size.width / 6f
         drawLine(color, Offset(0f, mid), Offset(step, mid - 5f), strokeWidth = 3f, cap = StrokeCap.Round)
@@ -1126,7 +1188,7 @@ private fun WaveIcon(color: Color) {
 
 @Composable
 private fun TargetIcon(color: Color) {
-    Canvas(Modifier.size(34.dp)) {
+    Canvas(Modifier.size(34.dp).semantics { contentDescription = "Pitch target" }) {
         drawCircle(color.copy(alpha = 0.35f), radius = size.minDimension / 2f, style = Stroke(width = 3f))
         drawCircle(color, radius = size.minDimension / 5f)
         drawLine(color, Offset(size.width / 2f, 0f), Offset(size.width / 2f, size.height), strokeWidth = 2f)
@@ -1140,6 +1202,43 @@ private fun dynamicYAxisLabels(minMidi: Double, maxMidi: Double): List<String> {
         val midi = maxMidi - (maxMidi - minMidi) * index / steps
         midiLabel(midi.roundToInt())
     }
+}
+
+private data class PitchChartData(
+    val targetPitch: Double?,
+    val minMidi: Double,
+    val maxMidi: Double,
+    val windowStart: Double,
+    val visibleSamples: List<PitchSample>,
+)
+
+private fun pitchChartData(state: PitchLabUiState): PitchChartData {
+    val targetPitch = if (state.selectedMode == PracticeMode.Target) {
+        PitchMath.analyze(state.target.frequencyHz, state.referencePitchHz).midi.toDouble()
+    } else {
+        null
+    }
+    val plottedPitches = state.samples.map { it.midi + it.centsFromNearest / 100.0 }
+    val centerPitch = plottedPitches.lastOrNull() ?: targetPitch ?: PitchMath.analyze(state.referencePitchHz.toDouble(), state.referencePitchHz).midi.toDouble()
+    val dynamicPitches = plottedPitches.takeLast(120) + listOfNotNull(targetPitch, centerPitch)
+    val rawMin = dynamicPitches.minOrNull() ?: centerPitch
+    val rawMax = dynamicPitches.maxOrNull() ?: centerPitch
+    val paddedMin = rawMin - 3.0
+    val paddedMax = rawMax + 3.0
+    val minSpan = 14.0
+    val rangeCenter = (paddedMin + paddedMax) / 2.0
+    val minMidi = if (paddedMax - paddedMin < minSpan) rangeCenter - minSpan / 2.0 else paddedMin
+    val maxMidi = if (paddedMax - paddedMin < minSpan) rangeCenter + minSpan / 2.0 else paddedMax
+    val latestSecond = state.samples.lastOrNull()?.elapsedSeconds ?: 0.0
+    val windowStart = (latestSecond - state.chartWindowSeconds).coerceAtLeast(0.0)
+    val windowEnd = windowStart + state.chartWindowSeconds
+    return PitchChartData(
+        targetPitch = targetPitch,
+        minMidi = minMidi,
+        maxMidi = maxMidi,
+        windowStart = windowStart,
+        visibleSamples = state.samples.filter { it.elapsedSeconds in windowStart..windowEnd },
+    )
 }
 
 private fun midiLabel(midi: Int): String {
