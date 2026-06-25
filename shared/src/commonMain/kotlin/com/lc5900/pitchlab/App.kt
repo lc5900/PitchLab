@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,15 +64,51 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 
-private val AppBackground = Color(0xFF080A0D)
-private val Panel = Color(0xFF15181E)
-private val PanelLight = Color(0xFF1E222B)
-private val Border = Color(0xFF2B303A)
+private data class PitchPalette(
+    val background: Color,
+    val panel: Color,
+    val panelLight: Color,
+    val border: Color,
+    val textPrimary: Color,
+    val muted: Color,
+)
+
+private val DarkPitchPalette = PitchPalette(
+    background = Color(0xFF080A0D),
+    panel = Color(0xFF15181E),
+    panelLight = Color(0xFF1E222B),
+    border = Color(0xFF2B303A),
+    textPrimary = Color.White,
+    muted = Color(0xFF9AA0AC),
+)
+
+private val LightPitchPalette = PitchPalette(
+    background = Color(0xFFF6F7FA),
+    panel = Color(0xFFFFFFFF),
+    panelLight = Color(0xFFECEFF5),
+    border = Color(0xFFD5DAE5),
+    textPrimary = Color(0xFF111827),
+    muted = Color(0xFF667085),
+)
+
+private val LocalPitchPalette = staticCompositionLocalOf { DarkPitchPalette }
+
+private val AppBackground: Color
+    @Composable get() = LocalPitchPalette.current.background
+private val Panel: Color
+    @Composable get() = LocalPitchPalette.current.panel
+private val PanelLight: Color
+    @Composable get() = LocalPitchPalette.current.panelLight
+private val Border: Color
+    @Composable get() = LocalPitchPalette.current.border
+private val TextPrimary: Color
+    @Composable get() = LocalPitchPalette.current.textPrimary
+private val Muted: Color
+    @Composable get() = LocalPitchPalette.current.muted
 private val Purple = Color(0xFF6657F3)
 private val Green = Color(0xFF68D957)
 private val Yellow = Color(0xFFFFC44F)
 private val Red = Color(0xFFFF6666)
-private val Muted = Color(0xFF9AA0AC)
 
 @Composable
 @Preview
@@ -85,14 +124,29 @@ fun App() {
         if (state.screen == PitchScreen.Home) {
             homeExitHandler.requestExit(strings.backAgainToExit)
         } else if (state.hasUnsavedPractice()) {
-            pendingDiscardAction = { controller.backHome() }
+            pendingDiscardAction = { controller.navigateBack() }
         } else {
-            controller.backHome()
+            controller.navigateBack()
         }
     }
 
-    MaterialTheme(colorScheme = darkColorScheme(background = AppBackground, surface = Panel)) {
-        CompositionLocalProvider(LocalPitchStrings provides strings) {
+    val systemInDarkTheme = isSystemInDarkTheme()
+    val effectiveDarkTheme = when (state.theme) {
+        AppTheme.System -> systemInDarkTheme
+        AppTheme.Dark -> true
+        AppTheme.Light -> false
+    }
+    val palette = if (effectiveDarkTheme) DarkPitchPalette else LightPitchPalette
+    val colorScheme = if (effectiveDarkTheme) {
+        darkColorScheme(background = palette.background, surface = palette.panel)
+    } else {
+        lightColorScheme(background = palette.background, surface = palette.panel)
+    }
+    MaterialTheme(colorScheme = colorScheme) {
+        CompositionLocalProvider(
+            LocalPitchStrings provides strings,
+            LocalPitchPalette provides palette,
+        ) {
             pendingDiscardAction?.let { action ->
                 AlertDialog(
                     onDismissRequest = { pendingDiscardAction = null },
@@ -119,6 +173,13 @@ fun App() {
                 when (state.screen) {
                     PitchScreen.Home -> HomeScreen(state, controller)
                     PitchScreen.Tuner -> TunerScreen(
+                        state = state,
+                        controller = controller,
+                        requestDiscardingAction = { action ->
+                            if (state.hasUnsavedPractice()) pendingDiscardAction = action else action()
+                        },
+                    )
+                    PitchScreen.VocalRange -> VocalRangeScreen(
                         state = state,
                         controller = controller,
                         requestDiscardingAction = { action ->
@@ -174,6 +235,7 @@ private fun HomeScreen(state: PitchLabUiState, controller: PitchLabController) {
                 onStart = { controller.beginSession(PracticeMode.Target) },
             )
             TunerEntryCard(controller::openTuner)
+            VocalRangeEntryCard(controller::openVocalRange)
             RecentPracticeCard(state.recentSummaries, controller::openHistory)
             SensitivityCard(state.sensitivity, controller::setSensitivity)
             Spacer(Modifier.height(4.dp))
@@ -198,10 +260,10 @@ private fun HistoryScreen(state: PitchLabUiState, controller: PitchLabController
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Header(showBack = true, onBack = controller::backHome)
+            Header(showBack = true, onBack = controller::navigateBack)
             val s = LocalPitchStrings.current
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(s.practiceHistory, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(s.practiceHistory, color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
                 TextButton(
                     onClick = controller::clearHistory,
@@ -217,7 +279,7 @@ private fun HistoryScreen(state: PitchLabUiState, controller: PitchLabController
             } else {
                 state.recentSummaries.forEach { item ->
                     key(item.startedAtMillis) {
-                        HistoryItem(item)
+                        HistoryItem(item, onDelete = { controller.deleteHistory(item.startedAtMillis) })
                     }
                 }
             }
@@ -243,10 +305,11 @@ private fun SettingsScreen(state: PitchLabUiState, controller: PitchLabControlle
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Header(showBack = true, onBack = controller::backHome)
+            Header(showBack = true, onBack = controller::navigateBack)
             val s = LocalPitchStrings.current
-            Text(s.settings, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Text(s.settings, color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             LanguageCard(state.language, controller::setLanguage)
+            ThemeCard(state.theme, controller::setTheme)
             SensitivityCard(state.sensitivity, controller::setSensitivity)
             ReferencePitchCard(state.referencePitchHz, controller::setReferencePitchHz)
             ChartWindowCard(state.chartWindowSeconds, controller::setChartWindowSeconds)
@@ -276,7 +339,7 @@ private fun TunerScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Header(showBack = true, onBack = { requestDiscardingAction(controller::backHome) })
+            Header(showBack = true, onBack = { requestDiscardingAction(controller::navigateBack) })
             InstrumentSegment(state.tunerInstrument, controller::setTunerInstrument)
             AudioInputErrorBanner(state.audioInputError)
             TunerStatusCard(state)
@@ -306,7 +369,7 @@ private fun SessionScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Header(showBack = true, onBack = { requestDiscardingAction(controller::backHome) })
+            Header(showBack = true, onBack = { requestDiscardingAction(controller::navigateBack) })
             SegmentedMode(state.selectedMode) { mode ->
                 requestDiscardingAction {
                     controller.stop(saveSummary = false)
@@ -351,7 +414,7 @@ private fun Header(showBack: Boolean, onBack: () -> Unit) {
                     .clip(CircleShape)
                     .semantics { contentDescription = s.back }
                     .clickable(onClick = onBack),
-                color = Color.White,
+                color = TextPrimary,
                 fontSize = 22.sp,
                 textAlign = TextAlign.Center,
             )
@@ -359,9 +422,9 @@ private fun Header(showBack: Boolean, onBack: () -> Unit) {
             WaveIcon(Purple)
             Spacer(Modifier.width(8.dp))
         }
-        Text("PitchLab", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        Text("PitchLab", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         Spacer(Modifier.width(6.dp))
-        Text(s.labName, color = Color.White.copy(alpha = 0.82f), fontSize = 12.sp)
+        Text(s.labName, color = TextPrimary.copy(alpha = 0.82f), fontSize = 12.sp)
         Spacer(Modifier.weight(1f))
         Text("🎙", fontSize = 18.sp)
     }
@@ -457,7 +520,7 @@ private fun SegmentButton(text: String, selected: Boolean, modifier: Modifier, o
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Color.White, fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+        Text(text, color = if (selected) Color.White else TextPrimary, fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 
@@ -503,7 +566,7 @@ private fun TunerStatusCard(state: PitchLabUiState) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
                 Text(s.detected, color = Muted, fontSize = 11.sp)
-                Text(current?.let { "${it.note}${it.octave}" } ?: "--", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text(current?.let { "${it.note}${it.octave}" } ?: "--", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text(current?.let { "${it.frequencyHz.roundToInt()} Hz" } ?: s.waitingPitch, color = Muted, fontSize = 12.sp)
             }
             Column(Modifier.weight(1f)) {
@@ -542,7 +605,7 @@ private fun TunerStringsCard(state: PitchLabUiState, controller: PitchLabControl
     }
     PitchPanel(contentPadding = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${s.strings} · ${if (state.tunerInstrument == TunerInstrument.Guitar) s.guitar else s.ukulele}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("${s.strings} · ${if (state.tunerInstrument == TunerInstrument.Guitar) s.guitar else s.ukulele}", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Text(s.referenceTone, color = Muted, fontSize = 11.sp)
         }
@@ -567,7 +630,7 @@ private fun TunerStringsCard(state: PitchLabUiState, controller: PitchLabControl
 private fun ReferencePitchCard(referencePitchHz: Int, onReferencePitchChange: (Int) -> Unit) {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
-        Text(s.standardPitch, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(s.standardPitch, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(s.referencePitchRange, color = Muted, fontSize = 11.sp)
         Spacer(Modifier.height(8.dp))
@@ -578,7 +641,7 @@ private fun ReferencePitchCard(referencePitchHz: Int, onReferencePitchChange: (I
             Text(
                 "A4 = $referencePitchHz Hz",
                 modifier = Modifier.weight(1f),
-                color = Color.White,
+                color = TextPrimary,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -591,10 +654,40 @@ private fun ReferencePitchCard(referencePitchHz: Int, onReferencePitchChange: (I
 }
 
 @Composable
+private fun VocalRangeScreen(
+    state: PitchLabUiState,
+    controller: PitchLabController,
+    requestDiscardingAction: (() -> Unit) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .padding(start = 4.dp, top = 8.dp, end = 4.dp, bottom = 4.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Header(showBack = true, onBack = { requestDiscardingAction(controller::navigateBack) })
+            AudioInputErrorBanner(state.audioInputError)
+            VocalRangeStatusCard(state)
+            PitchChart(state)
+            Spacer(Modifier.height(4.dp))
+        }
+        VocalRangeControls(state, controller)
+    }
+}
+
+@Composable
 private fun ChartWindowCard(chartWindowSeconds: Int, onChartWindowChange: (Int) -> Unit) {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
-        Text(s.chartWindow, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(s.chartWindow, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             listOf(10, 15, 30).forEach { seconds ->
@@ -620,7 +713,7 @@ private fun StepperButton(label: String, enabled: Boolean, onClick: () -> Unit) 
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = if (enabled) Color.White else Muted, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = if (enabled) TextPrimary else Muted, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -650,11 +743,11 @@ private fun TunerStringRow(
                 .border(1.dp, activeColor, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Text(string.position.toString(), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(string.position.toString(), color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(string.label, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(string.label, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
             Text("${string.target.frequencyHz.roundToInt()} Hz", color = Muted, fontSize = 10.sp)
         }
         Column(horizontalAlignment = Alignment.End) {
@@ -675,10 +768,10 @@ private fun TunerStringRow(
 private fun InfoCard() {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
-        Text(s.twoModesTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text(s.twoModesTitle, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
         Spacer(Modifier.height(6.dp))
-        Text(s.freeModeDescription, color = Color.White.copy(alpha = 0.78f), fontSize = 11.sp)
-        Text(s.targetModeDescription, color = Color.White.copy(alpha = 0.78f), fontSize = 11.sp)
+        Text(s.freeModeDescription, color = TextPrimary.copy(alpha = 0.78f), fontSize = 11.sp)
+        Text(s.targetModeDescription, color = TextPrimary.copy(alpha = 0.78f), fontSize = 11.sp)
     }
 }
 
@@ -698,10 +791,10 @@ private fun ModeCard(title: String, subtitle: String, mode: PracticeMode, color:
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                Text(subtitle, color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                Text(title, color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = TextPrimary.copy(alpha = 0.8f), fontSize = 12.sp)
             }
-            Text(">", color = Color.White, fontSize = 22.sp)
+            Text(">", color = TextPrimary, fontSize = 22.sp)
         }
         Spacer(Modifier.height(8.dp))
         MiniChart(mode)
@@ -737,10 +830,10 @@ private fun TunerEntryCard(onStart: () -> Unit) {
             }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(s.tuner, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("${s.guitar} / ${s.ukulele} · ${s.referenceTone}", color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp)
+                Text(s.tuner, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("${s.guitar} / ${s.ukulele} · ${s.referenceTone}", color = TextPrimary.copy(alpha = 0.8f), fontSize = 11.sp)
             }
-            Text(">", color = Color.White, fontSize = 22.sp)
+            Text(">", color = TextPrimary, fontSize = 22.sp)
         }
     }
 }
@@ -753,7 +846,7 @@ private fun FreeStatusCard(state: PitchLabUiState) {
             Column(Modifier.weight(1f)) {
                 Text(s.currentPitch, color = Muted, fontSize = 11.sp)
                 val sample = state.currentSample
-                Text(sample?.let { "${it.note}${it.octave}" } ?: "--", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text(sample?.let { "${it.note}${it.octave}" } ?: "--", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text(sample?.let { "${it.frequencyHz.roundToInt()} Hz" } ?: s.waitingPitch, color = Muted, fontSize = 12.sp)
             }
             Column(Modifier.weight(1f)) {
@@ -770,7 +863,7 @@ private fun TargetSelector(selected: TargetNote, targets: List<TargetNote>, onSe
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 10.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${s.targetNote}: ${selected.label} / ${selected.frequencyHz.roundToInt()} Hz", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("${s.targetNote}: ${selected.label} / ${selected.frequencyHz.roundToInt()} Hz", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Text("${s.referencePitch}: 440 Hz", color = Muted, fontSize = 10.sp)
         }
@@ -789,7 +882,7 @@ private fun TargetSelector(selected: TargetNote, targets: List<TargetNote>, onSe
                         .clickable { onSelect(target) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(target.label, color = Color.White, fontSize = 12.sp, fontWeight = if (target == selected) FontWeight.Bold else FontWeight.Normal)
+                    Text(target.label, color = if (target == selected) Color.White else TextPrimary, fontSize = 12.sp, fontWeight = if (target == selected) FontWeight.Bold else FontWeight.Normal)
                 }
             }
         }
@@ -829,7 +922,7 @@ private fun PitchChart(state: PitchLabUiState) {
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
                     dynamicYAxisLabels(chartData.minMidi, chartData.maxMidi).forEach {
-                        Text(it, color = Color.White.copy(alpha = 0.75f), fontSize = 10.sp)
+                        Text(it, color = TextPrimary.copy(alpha = 0.75f), fontSize = 10.sp)
                     }
                 }
                 Canvas(Modifier.weight(1f).fillMaxHeight()) {
@@ -892,7 +985,7 @@ private fun LegendItem(color: Color, text: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(8.dp))
-        Text(text, color = Color.White.copy(alpha = 0.78f), fontSize = 10.sp)
+        Text(text, color = TextPrimary.copy(alpha = 0.78f), fontSize = 10.sp)
     }
 }
 
@@ -900,11 +993,11 @@ private fun LegendItem(color: Color, text: String) {
 private fun ResultCard(summary: PracticeSummary?, state: PitchLabUiState) {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 10.dp) {
-        Text(s.resultTitle, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(s.resultTitle, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             ResultMetric(s.averageDeviation, summary?.averageCents?.let { signedCents(it) } ?: state.currentSample?.centsFromTarget?.let { signedCents(it) } ?: "--", Red)
-            ResultMetric(s.stableDuration, summary?.durationSeconds?.formatDuration() ?: state.elapsedSeconds.formatDuration(), Color.White)
+            ResultMetric(s.stableDuration, summary?.durationSeconds?.formatDuration() ?: state.elapsedSeconds.formatDuration(), TextPrimary)
             ResultMetric(s.passDecision, summary?.let { if (it.passed) s.passed else s.failed } ?: "--", if (summary?.passed == true) Green else Red)
         }
     }
@@ -941,7 +1034,7 @@ private fun TransportControls(state: PitchLabUiState, controller: PitchLabContro
             CircleControl(s.stop, "■") { controller.stop() }
         }
         Spacer(Modifier.height(5.dp))
-        Text(state.elapsedSeconds.formatDuration(), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center, color = Color.White, fontSize = 14.sp)
+        Text(state.elapsedSeconds.formatDuration(), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center, color = TextPrimary, fontSize = 14.sp)
     }
 }
 
@@ -957,9 +1050,9 @@ private fun CircleControl(label: String, glyph: String, onClick: () -> Unit) {
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
-            Text(glyph, color = Color.White, fontSize = 14.sp)
+            Text(glyph, color = TextPrimary, fontSize = 14.sp)
         }
-        Text(label, color = Color.White.copy(alpha = 0.78f), fontSize = 10.sp)
+        Text(label, color = TextPrimary.copy(alpha = 0.78f), fontSize = 10.sp)
     }
 }
 
@@ -968,7 +1061,7 @@ private fun RecentPracticeCard(items: List<PracticeSummary>, onViewAll: () -> Un
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(s.recentPractice, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(s.recentPractice, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Text(
                 s.viewAll,
@@ -990,7 +1083,7 @@ private fun RecentPracticeCard(items: List<PracticeSummary>, onViewAll: () -> Un
                         WaveIcon(if (item.passed) Green else Yellow)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(practiceTitle(item, s), color = Color.White, fontSize = 12.sp)
+                            Text(practiceTitle(item, s), color = TextPrimary, fontSize = 12.sp)
                             Text("${item.durationSeconds.formatDuration()} · ${s.stability} ${item.stabilityPercent}%", color = Muted, fontSize = 10.sp)
                         }
                         Text("${item.stabilityPercent}%", color = item.stabilityPercent.stabilityColor(), fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -1002,7 +1095,7 @@ private fun RecentPracticeCard(items: List<PracticeSummary>, onViewAll: () -> Un
 }
 
 @Composable
-private fun HistoryItem(item: PracticeSummary) {
+private fun HistoryItem(item: PracticeSummary, onDelete: () -> Unit) {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1011,7 +1104,7 @@ private fun HistoryItem(item: PracticeSummary) {
             Column(Modifier.weight(1f)) {
                 Text(
                     practiceTitle(item, s),
-                    color = Color.White,
+                    color = TextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                 )
@@ -1024,8 +1117,105 @@ private fun HistoryItem(item: PracticeSummary) {
             Column(horizontalAlignment = Alignment.End) {
                 Text(if (item.passed) s.passed else s.failed, color = if (item.passed) Green else Red, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text(item.averageCents?.let { signedCents(it) } ?: "--", color = Muted, fontSize = 10.sp)
+                Text(
+                    s.delete,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onDelete)
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    color = Red,
+                    fontSize = 10.sp,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun VocalRangeEntryCard(onStart: () -> Unit) {
+    val s = LocalPitchStrings.current
+    PitchPanel(
+        modifier = Modifier.clickable(onClick = onStart),
+        contentPadding = 10.dp,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Green.copy(alpha = 0.16f))
+                    .border(1.dp, Green, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("↕", color = Green, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(s.vocalRange, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(s.startRangeTest, color = TextPrimary.copy(alpha = 0.8f), fontSize = 11.sp)
+            }
+            Text(">", color = TextPrimary, fontSize = 22.sp)
+        }
+    }
+}
+
+@Composable
+private fun VocalRangeStatusCard(state: PitchLabUiState) {
+    val s = LocalPitchStrings.current
+    val range = state.vocalRange
+    PitchPanel(contentPadding = 10.dp) {
+        Text(
+            if (state.isPaused) s.paused else if (state.isRunning) s.recording else s.waiting,
+            color = if (state.isRunning && !state.isPaused) Green else Muted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            RangeMetric(s.currentPitch, state.currentSample?.labelWithHz() ?: "--", Muted, Modifier.weight(1f))
+            RangeMetric(s.rangeSpan, range.semitoneSpan?.let { "$it ${s.semitones}" } ?: "--", Purple, Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            RangeMetric(s.lowestPitch, range.lowest?.labelWithHz() ?: s.noRangeYet, Green, Modifier.weight(1f))
+            RangeMetric(s.highestPitch, range.highest?.labelWithHz() ?: s.noRangeYet, Yellow, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun RangeMetric(title: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(title, color = Muted, fontSize = 11.sp)
+        Text(value, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun VocalRangeControls(state: PitchLabUiState, controller: PitchLabController) {
+    val s = LocalPitchStrings.current
+    PitchPanel(contentPadding = 10.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircleControl(s.retest, "↻") { controller.resetVocalRange() }
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(Purple)
+                    .border(3.dp, Purple.copy(alpha = 0.24f), CircleShape)
+                    .clickable { controller.startOrResume() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(if (!state.isRunning || state.isPaused) "▶" else "Ⅱ", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
+            CircleControl(s.stop, "■") { controller.stop(saveSummary = false) }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(state.elapsedSeconds.formatDuration(), modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center, color = TextPrimary, fontSize = 14.sp)
     }
 }
 
@@ -1051,7 +1241,7 @@ private fun SensitivityCard(sensitivity: Float, onSensitivityChange: (Float) -> 
     }
     PitchPanel(contentPadding = 12.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(s.sensitivitySettings, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(s.sensitivitySettings, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(6.dp))
             Box(
                 modifier = Modifier
@@ -1066,7 +1256,7 @@ private fun SensitivityCard(sensitivity: Float, onSensitivityChange: (Float) -> 
         }
         Spacer(Modifier.height(6.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(s.low, color = Color.White, fontSize = 11.sp)
+            Text(s.low, color = TextPrimary, fontSize = 11.sp)
             Slider(
                 value = sensitivity,
                 onValueChange = onSensitivityChange,
@@ -1075,14 +1265,14 @@ private fun SensitivityCard(sensitivity: Float, onSensitivityChange: (Float) -> 
                     .height(28.dp)
                     .padding(horizontal = 8.dp),
                 colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
+                    thumbColor = TextPrimary,
                     activeTrackColor = Purple,
-                    inactiveTrackColor = Color.White.copy(alpha = 0.22f),
+                    inactiveTrackColor = TextPrimary.copy(alpha = 0.22f),
                     activeTickColor = Color.Transparent,
                     inactiveTickColor = Color.Transparent,
                 ),
             )
-            Text(s.high, color = Color.White, fontSize = 11.sp)
+            Text(s.high, color = TextPrimary, fontSize = 11.sp)
         }
         Text(
             "${s.current}: ${sensitivityLabel(sensitivity, s)}",
@@ -1098,7 +1288,7 @@ private fun SensitivityCard(sensitivity: Float, onSensitivityChange: (Float) -> 
 private fun LanguageCard(language: AppLanguage, onLanguageChange: (AppLanguage) -> Unit) {
     val s = LocalPitchStrings.current
     PitchPanel(contentPadding = 12.dp) {
-        Text(s.language, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(s.language, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             LanguageButton(
@@ -1118,6 +1308,35 @@ private fun LanguageCard(language: AppLanguage, onLanguageChange: (AppLanguage) 
 }
 
 @Composable
+private fun ThemeCard(theme: AppTheme, onThemeChange: (AppTheme) -> Unit) {
+    val s = LocalPitchStrings.current
+    PitchPanel(contentPadding = 12.dp) {
+        Text(s.theme, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            LanguageButton(
+                text = s.systemTheme,
+                selected = theme == AppTheme.System,
+                modifier = Modifier.weight(1f),
+                onClick = { onThemeChange(AppTheme.System) },
+            )
+            LanguageButton(
+                text = s.darkTheme,
+                selected = theme == AppTheme.Dark,
+                modifier = Modifier.weight(1f),
+                onClick = { onThemeChange(AppTheme.Dark) },
+            )
+            LanguageButton(
+                text = s.lightTheme,
+                selected = theme == AppTheme.Light,
+                modifier = Modifier.weight(1f),
+                onClick = { onThemeChange(AppTheme.Light) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun LanguageButton(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier = modifier
@@ -1128,7 +1347,7 @@ private fun LanguageButton(text: String, selected: Boolean, modifier: Modifier, 
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Color.White, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+        Text(text, color = if (selected) Color.White else TextPrimary, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
 }
 
@@ -1270,6 +1489,8 @@ private fun tunerDirection(cents: Double, strings: PitchStrings): String = when 
     else -> strings.inTune
 }
 
+private fun PitchSample.labelWithHz(): String = "${note}${octave} / ${frequencyHz.roundToInt()} Hz"
+
 private fun practiceTitle(item: PracticeSummary, strings: PitchStrings): String =
     if (item.mode == PracticeMode.Free) {
         strings.freePractice
@@ -1278,7 +1499,7 @@ private fun practiceTitle(item: PracticeSummary, strings: PitchStrings): String 
     }
 
 private fun PitchLabUiState.hasUnsavedPractice(): Boolean =
-    screen in setOf(PitchScreen.Session, PitchScreen.Tuner) && isRunning && samples.isNotEmpty()
+    screen in setOf(PitchScreen.Session, PitchScreen.Tuner, PitchScreen.VocalRange) && isRunning && samples.isNotEmpty()
 
 private fun sensitivityLabel(value: Float, strings: PitchStrings): String = when {
     value < 0.33f -> strings.sensitivityLow

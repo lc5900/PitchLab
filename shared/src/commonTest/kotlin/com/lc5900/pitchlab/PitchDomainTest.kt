@@ -40,8 +40,8 @@ class PitchDomainTest {
 
     @Test
     fun freeModeStabilityDetectsCalmAndWobblyInput() {
-        assertEquals(PitchTone.Green, PitchClassifier.freeTone(listOf(1.0, 2.0, -1.0, 0.5, -0.5)))
-        assertEquals(PitchTone.Yellow, PitchClassifier.freeTone(listOf(-35.0, 30.0, -28.0, 34.0, 0.0)))
+        assertEquals(PitchTone.Green, PitchClassifier.freeTone(listOf(1.0, 2.0, -1.0, 0.5, -0.5), sensitivity = 0.5f))
+        assertEquals(PitchTone.Yellow, PitchClassifier.freeTone(listOf(-35.0, 30.0, -28.0, 34.0, 0.0), sensitivity = 0.5f))
         assertTrue(PitchClassifier.stabilityPercent(listOf(0.0, 1.0, -1.0, 0.5), sensitivity = 0.5f) > 90)
         assertTrue(PitchClassifier.stabilityPercent(listOf(-40.0, 35.0, -30.0, 45.0), sensitivity = 0.5f) < 30)
     }
@@ -59,6 +59,15 @@ class PitchDomainTest {
         assertEquals(null, PitchMath.targetOrNull("not-a-note"))
         assertEquals("E2", PitchMath.targetFromMidi(40).label)
         assertEquals(442.0, PitchMath.target("A4", referencePitchHz = 442).frequencyHz, absoluteTolerance = 0.01)
+    }
+
+    @Test
+    fun vocalRangeResultReportsSemitoneSpan() {
+        val low = sample(midi = 60, note = "C", octave = 4)
+        val high = sample(midi = 67, note = "G", octave = 4)
+
+        assertEquals(7, VocalRangeResult(lowest = low, highest = high).semitoneSpan)
+        assertEquals(null, VocalRangeResult(lowest = null, highest = high).semitoneSpan)
     }
 
     @Test
@@ -83,4 +92,16 @@ class PitchDomainTest {
         FloatArray(size) { index ->
             sin(2.0 * PI * frequency * index / sampleRate).toFloat()
         }
+
+    private fun sample(midi: Int, note: String, octave: Int): PitchSample =
+        PitchSample(
+            elapsedSeconds = 0.0,
+            frequencyHz = PitchMath.midiToFrequency(midi),
+            note = note,
+            octave = octave,
+            midi = midi,
+            centsFromNearest = 0.0,
+            centsFromTarget = null,
+            tone = PitchTone.Green,
+        )
 }

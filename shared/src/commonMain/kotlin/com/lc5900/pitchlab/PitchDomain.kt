@@ -19,6 +19,12 @@ enum class PitchTone {
     Red,
 }
 
+enum class AppTheme {
+    System,
+    Dark,
+    Light,
+}
+
 data class TargetNote(
     val note: String,
     val octave: Int,
@@ -36,8 +42,19 @@ data class PitchSample(
     val centsFromNearest: Double,
     val centsFromTarget: Double?,
     val tone: PitchTone,
-    val segmentIndex: Int = 0,
+    val segmentIndex: Int = 1,
 )
+
+data class VocalRangeResult(
+    val lowest: PitchSample?,
+    val highest: PitchSample?,
+) {
+    val semitoneSpan: Int? = if (lowest != null && highest != null) {
+        highest.midi - lowest.midi
+    } else {
+        null
+    }
+}
 
 data class PracticeSummary(
     val mode: PracticeMode,
@@ -68,7 +85,7 @@ data class PitchAnalysis(
     val centsFromNearest: Double,
 )
 
-data class AudioFrame(
+class AudioFrame(
     val samples: FloatArray,
     val sampleRate: Int,
 )
@@ -142,18 +159,10 @@ object PitchClassifier {
         }
     }
 
-    fun freeTone(recentCents: List<Double>): PitchTone {
-        return freeTone(recentCents, sensitivity = 0.5f)
-    }
-
     fun freeTone(recentCents: List<Double>, sensitivity: Float): PitchTone {
         if (recentCents.size < 4) return PitchTone.Green
         val spread = standardDeviation(recentCents)
         return if (spread <= stableThreshold(sensitivity)) PitchTone.Green else PitchTone.Yellow
-    }
-
-    fun stabilityPercent(recentCents: List<Double>): Int {
-        return stabilityPercent(recentCents, sensitivity = 0.5f)
     }
 
     fun stabilityPercent(recentCents: List<Double>, sensitivity: Float): Int {

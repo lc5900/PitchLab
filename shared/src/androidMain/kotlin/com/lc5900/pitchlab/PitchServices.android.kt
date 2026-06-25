@@ -150,6 +150,15 @@ private class AndroidAppSettingsStore(
     override suspend fun saveChartWindowSeconds(seconds: Int) {
         preferences.edit().putInt("chart_window_seconds", seconds).apply()
     }
+
+    override suspend fun loadTheme(): AppTheme? =
+        preferences.getString("theme", null)?.let { raw ->
+            runCatching { AppTheme.valueOf(raw) }.getOrNull()
+        }
+
+    override suspend fun saveTheme(theme: AppTheme) {
+        preferences.edit().putString("theme", theme.name).apply()
+    }
 }
 
 private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
@@ -158,15 +167,18 @@ private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
     private var currentTrack: AudioTrack? = null
 
     override fun play(frequencyHz: Double, instrument: TunerInstrument) {
+        var previousTrack: AudioTrack? = null
         val token = synchronized(lock) {
             playToken += 1
-            currentTrack?.stopAndRelease()
+            previousTrack = currentTrack
             currentTrack = null
             playToken
         }
+        previousTrack?.fadeOutAndRelease()
         thread(name = "PitchLabReferenceTone") {
             val sampleRate = 44_100
             val durationMillis = 1_250
+            val releaseMillis = 80
             val sampleCount = sampleRate * durationMillis / 1000
             val harmonics = if (instrument == TunerInstrument.Guitar) {
                 doubleArrayOf(1.0, 0.62, 0.42, 0.28, 0.2, 0.14)
@@ -177,7 +189,13 @@ private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
                 val time = index.toDouble() / sampleRate
                 val attack = (time / 0.018).coerceIn(0.0, 1.0)
                 val decay = exp(-2.4 * time)
-                val envelope = attack * decay
+                val releaseStart = (durationMillis - releaseMillis) / 1000.0
+                val release = if (time >= releaseStart) {
+                    ((durationMillis / 1000.0 - time) / (releaseMillis / 1000.0)).coerceIn(0.0, 1.0)
+                } else {
+                    1.0
+                }
+                val envelope = attack * decay * release
                 var mixed = 0.0
                 harmonics.forEachIndexed { harmonicIndex, amplitude ->
                     mixed += sin(2.0 * PI * frequencyHz * (harmonicIndex + 1) * time) * amplitude
@@ -215,13 +233,32 @@ private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
                 track.play()
                 Thread.sleep(durationMillis + 80L)
             } finally {
-                synchronized(lock) {
+                val shouldRelease = synchronized(lock) {
                     if (currentTrack == track) {
                         currentTrack = null
+                        true
+                    } else {
+                        false
                     }
                 }
-                track.stopAndRelease()
+                if (shouldRelease) {
+                    track.stopAndRelease()
+                }
             }
+        }
+    }
+
+    private fun AudioTrack.fadeOutAndRelease() {
+        thread(name = "PitchLabReferenceToneFade") {
+            runCatching {
+                if (playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    repeat(fadeSteps) { index ->
+                        setVolume(1f - (index + 1).toFloat() / fadeSteps)
+                        Thread.sleep(fadeStepMillis)
+                    }
+                }
+            }
+            stopAndRelease()
         }
     }
 
@@ -232,6 +269,11 @@ private class AndroidReferenceTonePlayer : ReferenceTonePlayer {
             }
         }
         release()
+    }
+
+    private companion object {
+        const val fadeSteps = 8
+        const val fadeStepMillis = 6L
     }
 }
 
@@ -250,6 +292,14 @@ private class AndroidPracticeHistoryStore(
         val next = (loadRecent() + summary)
             .sortedByDescending { it.startedAtMillis }
             .take(historyLimit)
+            .map { it.encode() }
+            .toSet()
+        preferences.edit().putStringSet("items", next).apply()
+    }
+
+    override suspend fun delete(startedAtMillis: Long) {
+        val next = loadRecent()
+            .filterNot { it.startedAtMillis == startedAtMillis }
             .map { it.encode() }
             .toSet()
         preferences.edit().putStringSet("items", next).apply()

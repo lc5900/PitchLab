@@ -10,6 +10,7 @@ interface PlatformAudioInput {
 interface PracticeHistoryStore {
     suspend fun loadRecent(): List<PracticeSummary>
     suspend fun save(summary: PracticeSummary)
+    suspend fun delete(startedAtMillis: Long)
     suspend fun clear()
 }
 
@@ -22,6 +23,8 @@ interface AppSettingsStore {
     suspend fun saveReferencePitchHz(referencePitchHz: Int)
     suspend fun loadChartWindowSeconds(): Int?
     suspend fun saveChartWindowSeconds(seconds: Int)
+    suspend fun loadTheme(): AppTheme?
+    suspend fun saveTheme(theme: AppTheme)
 }
 
 interface ReferenceTonePlayer {

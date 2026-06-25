@@ -15,6 +15,7 @@ data class PitchLabUiState(
     val screen: PitchScreen = PitchScreen.Home,
     val selectedMode: PracticeMode = PracticeMode.Free,
     val language: AppLanguage = defaultAppLanguage(),
+    val theme: AppTheme = AppTheme.System,
     val referencePitchHz: Int = 440,
     val chartWindowSeconds: Int = 15,
     val target: TargetNote = PitchMath.target("A4"),
@@ -30,11 +31,13 @@ data class PitchLabUiState(
     val recentSummaries: List<PracticeSummary> = emptyList(),
     val lastSummary: PracticeSummary? = null,
     val audioInputError: AudioInputError? = null,
+    val vocalRange: VocalRangeResult = VocalRangeResult(lowest = null, highest = null),
 )
 
 enum class PitchScreen {
     Home,
     Tuner,
+    VocalRange,
     Session,
     History,
     Settings,
@@ -54,6 +57,7 @@ class PitchLabController(
     private var lastVoiceWallMillis: Long? = null
     private var segmentIndex = 0
     private var referenceToneBlockUntilMillis = 0L
+    private val backStack = mutableListOf<PitchScreen>()
 
     init {
         scope.launch {
@@ -61,6 +65,7 @@ class PitchLabController(
             _state.value = _state.value.copy(
                 recentSummaries = dependencies.historyStore.loadRecent(),
                 language = dependencies.settingsStore.loadLanguage() ?: _state.value.language,
+                theme = dependencies.settingsStore.loadTheme() ?: _state.value.theme,
                 sensitivity = dependencies.settingsStore.loadSensitivity()?.coerceIn(0f, 1f) ?: _state.value.sensitivity,
                 chartWindowSeconds = dependencies.settingsStore.loadChartWindowSeconds()?.takeIf { it in chartWindowOptions } ?: _state.value.chartWindowSeconds,
                 referencePitchHz = referencePitch,
@@ -71,7 +76,9 @@ class PitchLabController(
     }
 
     fun openSession(mode: PracticeMode) {
-        _state.value = _state.value.copy(screen = PitchScreen.Session, selectedMode = mode, lastSummary = null)
+        navigateTo(PitchScreen.Session) {
+            copy(selectedMode = mode, lastSummary = null)
+        }
     }
 
     fun beginSession(mode: PracticeMode) {
@@ -81,20 +88,42 @@ class PitchLabController(
 
     fun backHome() {
         stop(saveSummary = false)
+        backStack.clear()
         _state.value = _state.value.copy(screen = PitchScreen.Home)
+    }
+
+    fun navigateBack() {
+        stop(saveSummary = false)
+        val previous = if (backStack.isEmpty()) {
+            PitchScreen.Home
+        } else {
+            backStack.removeAt(backStack.lastIndex)
+        }
+        _state.value = _state.value.copy(screen = previous)
     }
 
     fun openHistory() {
         stop(saveSummary = false)
-        _state.value = _state.value.copy(screen = PitchScreen.History)
+        navigateTo(PitchScreen.History)
     }
 
     fun openTuner() {
-        _state.value = _state.value.copy(
-            screen = PitchScreen.Tuner,
-            selectedMode = PracticeMode.Target,
-            lastSummary = null,
-        )
+        navigateTo(PitchScreen.Tuner) {
+            copy(selectedMode = PracticeMode.Target, lastSummary = null)
+        }
+        if (!_state.value.isRunning) {
+            startOrResume()
+        }
+    }
+
+    fun openVocalRange() {
+        navigateTo(PitchScreen.VocalRange) {
+            copy(
+                selectedMode = PracticeMode.Free,
+                lastSummary = null,
+                vocalRange = VocalRangeResult(lowest = null, highest = null),
+            )
+        }
         if (!_state.value.isRunning) {
             startOrResume()
         }
@@ -102,7 +131,15 @@ class PitchLabController(
 
     fun openSettings() {
         stop(saveSummary = false)
-        _state.value = _state.value.copy(screen = PitchScreen.Settings)
+        navigateTo(PitchScreen.Settings)
+    }
+
+    private fun navigateTo(screen: PitchScreen, transform: PitchLabUiState.() -> PitchLabUiState = { this }) {
+        val current = _state.value
+        if (current.screen != screen) {
+            backStack += current.screen
+        }
+        _state.value = current.transform().copy(screen = screen)
     }
 
     fun selectTarget(target: TargetNote) {
@@ -145,6 +182,13 @@ class PitchLabController(
         }
     }
 
+    fun setTheme(theme: AppTheme) {
+        _state.value = _state.value.copy(theme = theme)
+        scope.launch {
+            dependencies.settingsStore.saveTheme(theme)
+        }
+    }
+
     fun setTunerInstrument(instrument: TunerInstrument) {
         _state.value = _state.value.copy(tunerInstrument = instrument)
     }
@@ -154,6 +198,26 @@ class PitchLabController(
             dependencies.historyStore.clear()
             _state.value = _state.value.copy(recentSummaries = emptyList())
         }
+    }
+
+    fun deleteHistory(startedAtMillis: Long) {
+        scope.launch {
+            dependencies.historyStore.delete(startedAtMillis)
+            _state.value = _state.value.copy(recentSummaries = dependencies.historyStore.loadRecent())
+        }
+    }
+
+    fun resetVocalRange() {
+        stop(saveSummary = false)
+        _state.value = _state.value.copy(
+            elapsedSeconds = 0,
+            samples = emptyList(),
+            currentSample = null,
+            stabilityPercent = 0,
+            vocalRange = VocalRangeResult(lowest = null, highest = null),
+            audioInputError = null,
+        )
+        startOrResume()
     }
 
     fun playReferenceTone(target: TargetNote) {
@@ -223,7 +287,7 @@ class PitchLabController(
                         markSilence(now)
                         return@collect
                     }
-                val analysis = PitchMath.analyze(frequency, state.referencePitchHz)
+                    val analysis = PitchMath.analyze(frequency, state.referencePitchHz)
                     val lastVoice = lastVoiceWallMillis
                     if (lastVoice == null || now - lastVoice > silenceGapMillis) {
                         segmentIndex += 1
@@ -256,11 +320,17 @@ class PitchLabController(
                     )
                     val samples = (state.samples + sample).takeLast(240)
                     val stabilitySource = samples.takeLast(24).map { it.centsFromTarget ?: it.centsFromNearest }
+                    val vocalRange = if (state.screen == PitchScreen.VocalRange) {
+                        state.vocalRange.withSample(sample)
+                    } else {
+                        state.vocalRange
+                    }
                     _state.value = state.copy(
                         elapsedSeconds = voicedElapsedSeconds.roundToInt(),
                         currentSample = sample,
                         samples = samples,
                         stabilityPercent = PitchClassifier.stabilityPercent(stabilitySource, state.sensitivity),
+                        vocalRange = vocalRange,
                     )
                 }
         }
@@ -330,3 +400,17 @@ class PitchLabController(
 }
 
 expect fun currentTimeMillis(): Long
+
+private fun VocalRangeResult.withSample(sample: PitchSample): VocalRangeResult =
+    VocalRangeResult(
+        lowest = when {
+            lowest == null -> sample
+            sample.midi + sample.centsFromNearest / 100.0 < lowest.midi + lowest.centsFromNearest / 100.0 -> sample
+            else -> lowest
+        },
+        highest = when {
+            highest == null -> sample
+            sample.midi + sample.centsFromNearest / 100.0 > highest.midi + highest.centsFromNearest / 100.0 -> sample
+            else -> highest
+        },
+    )

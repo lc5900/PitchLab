@@ -47,6 +47,10 @@ private class MemoryPracticeHistoryStore : PracticeHistoryStore {
         items = (listOf(summary) + items).take(20)
     }
 
+    override suspend fun delete(startedAtMillis: Long) {
+        items = items.filterNot { it.startedAtMillis == startedAtMillis }
+    }
+
     override suspend fun clear() {
         items = emptyList()
     }
@@ -57,6 +61,7 @@ private class MemoryAppSettingsStore : AppSettingsStore {
     private var sensitivity: Float? = null
     private var referencePitchHz: Int? = null
     private var chartWindowSeconds: Int? = null
+    private var theme: AppTheme? = null
 
     override suspend fun loadLanguage(): AppLanguage? = language
 
@@ -80,6 +85,12 @@ private class MemoryAppSettingsStore : AppSettingsStore {
 
     override suspend fun saveChartWindowSeconds(seconds: Int) {
         this.chartWindowSeconds = seconds
+    }
+
+    override suspend fun loadTheme(): AppTheme? = theme
+
+    override suspend fun saveTheme(theme: AppTheme) {
+        this.theme = theme
     }
 }
 
